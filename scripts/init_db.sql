@@ -77,8 +77,3 @@ CREATE INDEX IF NOT EXISTS idx_rutas_estado ON rutas(estado);
 CREATE INDEX IF NOT EXISTS idx_paradas_ruta ON paradas(ruta_id);
 CREATE INDEX IF NOT EXISTS idx_personas_parada ON personas(parada_id);
 CREATE INDEX IF NOT EXISTS idx_avances_estado ON avances(estado);
-
-# Agregar la instancia global al final del archivo
-echo "" >> core/database.py
-echo "# Instancia global" >> core/database.py
-echo "db = DatabaseManager()" >> core/database.py
