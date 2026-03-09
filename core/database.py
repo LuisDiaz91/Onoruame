@@ -1,3 +1,5 @@
+# Reemplaza TODO el contenido
+cat > core/database.py << 'EOF'
 """
 Manejador de base de datos PostgreSQL para Onoruame
 Proporciona pool de conexiones y métodos de acceso a BD
@@ -47,9 +49,6 @@ class DatabaseManager:
     def get_connection(self):
         """
         Obtiene una conexión del pool (context manager)
-        Uso:
-            with db.get_connection() as conn:
-                # usar conexión
         """
         if self._pool is None:
             self._init_pool()
@@ -69,10 +68,6 @@ class DatabaseManager:
     def get_cursor(self):
         """
         Obtiene un cursor directamente (más común)
-        Uso:
-            with db.get_cursor() as cursor:
-                cursor.execute("SELECT * FROM rutas")
-                resultados = cursor.fetchall()
         """
         with self.get_connection() as conn:
             cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -84,21 +79,12 @@ class DatabaseManager:
     def execute(self, query: str, params: tuple = None):
         """
         Ejecuta una consulta SQL y retorna resultados si existen
-        Útil para consultas rápidas
         """
         with self.get_cursor() as cursor:
             cursor.execute(query, params or ())
             if cursor.description:
                 return cursor.fetchall()
             return None
-    
-    def execute_many(self, query: str, params_list: list):
-        """
-        Ejecuta la misma consulta con múltiples parámetros
-        Útil para inserts masivos
-        """
-        with self.get_cursor() as cursor:
-            cursor.executemany(query, params_list)
     
     def health_check(self) -> bool:
         """Verifica que la conexión a BD funciona"""
@@ -128,7 +114,6 @@ class DatabaseManager:
                 with open(schema_path, 'r') as f:
                     sql = f.read()
                 
-                # Ejecutar el script SQL completo
                 with self.get_connection() as conn:
                     with conn.cursor() as cursor:
                         cursor.execute(sql)
@@ -141,17 +126,6 @@ class DatabaseManager:
         else:
             logger.warning(f"⚠️ No se encontró {schema_path}")
             return False
-    
-    def get_stats(self) -> dict:
-        """Obtiene estadísticas del pool de conexiones"""
-        if self._pool:
-            return {
-                'min_connections': self._pool.minconn,
-                'max_connections': self._pool.maxconn,
-                'used_connections': len(self._pool._used),
-                'available_connections': len(self._pool._pool)
-            }
-        return {}
 
 
 # =============================================================================
@@ -160,3 +134,4 @@ class DatabaseManager:
 # Esta instancia es la que se importa en otros módulos:
 # from core.database import db
 db = DatabaseManager()
+EOF
