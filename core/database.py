@@ -39,3 +39,6 @@ class DatabaseManager:
             raise e
         finally:
             self.pool.putconn(conn)
+
+# 🔴 SOLO AGREGA ESTO:
+db = DatabaseManager()
