@@ -1,4 +1,3 @@
-cat > core/repositories.py << 'EOF'
 """
 Repositorios para acceso a base de datos
 Proporciona métodos CRUD para las entidades del sistema
@@ -38,6 +37,37 @@ class RutaRepo:
             return cursor.fetchall()
     
     @staticmethod
+    def get(ruta_id):
+        """Obtiene una ruta por su ID"""
+        with db.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM rutas WHERE id = %s", (ruta_id,))
+            return cursor.fetchone()
+    
+    @staticmethod
+    def get_full(ruta_id):
+        """Obtiene una ruta con todas sus paradas y personas"""
+        with db.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT r.*, 
+                       json_agg(json_build_object(
+                           'direccion_original', p.direccion_original,
+                           'personas', (
+                               SELECT json_agg(json_build_object(
+                                   'nombre', pe.nombre,
+                                   'estado', pe.estado
+                               ))
+                               FROM personas pe
+                               WHERE pe.parada_id = p.id
+                           )
+                       )) as paradas
+                FROM rutas r
+                LEFT JOIN paradas p ON r.id = p.ruta_id
+                WHERE r.id = %s
+                GROUP BY r.id
+            """, (ruta_id,))
+            return cursor.fetchone()
+    
+    @staticmethod
     def cambiar_estado(ruta_id, nuevo_estado):
         """Cambia el estado de una ruta"""
         with db.get_cursor() as cursor:
@@ -45,6 +75,20 @@ class RutaRepo:
                 "UPDATE rutas SET estado = %s WHERE id = %s",
                 (nuevo_estado, ruta_id)
             )
+    
+    @staticmethod
+    def list_by_estado(estado):
+        """Lista rutas por estado"""
+        with db.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT r.*, COUNT(p.id) as total_paradas
+                FROM rutas r
+                LEFT JOIN paradas p ON r.id = p.ruta_id
+                WHERE r.estado = %s
+                GROUP BY r.id
+                ORDER BY r.id DESC
+            """, (estado,))
+            return cursor.fetchall()
     
     @staticmethod
     def asignar(ruta_id, repartidor_id):
@@ -73,12 +117,19 @@ class RepartidorRepo:
             return cursor.fetchall()
     
     @staticmethod
+    def list_activos():
+        """Lista repartidores activos"""
+        with db.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM repartidores WHERE activo = true ORDER BY nombre")
+            return cursor.fetchall()
+    
+    @staticmethod
     def create(nombre, telefono=None, telegram_id=None):
         """Crea un nuevo repartidor"""
         with db.get_cursor() as cursor:
             cursor.execute("""
-                INSERT INTO repartidores (nombre, telefono, telegram_id)
-                VALUES (%s, %s, %s)
+                INSERT INTO repartidores (nombre, telefono, telegram_id, activo)
+                VALUES (%s, %s, %s, true)
                 RETURNING id
             """, (nombre, telefono, telegram_id))
             return cursor.fetchone()['id']
@@ -98,7 +149,37 @@ class AvanceRepo:
                 LEFT JOIN repartidores r ON a.repartidor_id = r.id
                 WHERE a.estado = 'pendiente'
                 ORDER BY a.creado_en DESC
+                LIMIT 200
             """)
+            return cursor.fetchall()
+    
+    @staticmethod
+    def list_all(limit=200):
+        """Lista todos los avances"""
+        with db.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT a.*, p.nombre as persona_nombre, r.nombre as repartidor_nombre
+                FROM avances a
+                LEFT JOIN personas p ON a.persona_id = p.id
+                LEFT JOIN repartidores r ON a.repartidor_id = r.id
+                ORDER BY a.creado_en DESC
+                LIMIT %s
+            """, (limit,))
+            return cursor.fetchall()
+    
+    @staticmethod
+    def procesados(limit=200):
+        """Lista avances procesados"""
+        with db.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT a.*, p.nombre as persona_nombre, r.nombre as repartidor_nombre
+                FROM avances a
+                LEFT JOIN personas p ON a.persona_id = p.id
+                LEFT JOIN repartidores r ON a.repartidor_id = r.id
+                WHERE a.estado = 'procesado'
+                ORDER BY a.creado_en DESC
+                LIMIT %s
+            """, (limit,))
             return cursor.fetchall()
     
     @staticmethod
@@ -126,4 +207,3 @@ class GeocacheRepo:
                 FROM geocache
             """)
             return cursor.fetchone()
-EOF
