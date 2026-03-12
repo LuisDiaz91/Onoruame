@@ -1,7 +1,7 @@
-# Respaldar el actual por si acaso
-cp requirements.txt requirements.txt.backup
+# Respaldar el actual
+cp requirements.txt requirements.txt.bak
 
-# Crear el archivo correcto
+# Crear uno nuevo limpio
 cat > requirements.txt << 'EOF'
 flask==2.3.3
 flask-cors==4.0.0
