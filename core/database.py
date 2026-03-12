@@ -1,4 +1,3 @@
-# Reemplaza TODO el contenido
 cat > core/database.py << 'EOF'
 """
 Manejador de base de datos PostgreSQL para Onoruame
@@ -11,6 +10,7 @@ from psycopg2.pool import SimpleConnectionPool
 from contextlib import contextmanager
 from .config import settings
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,6 @@ class DatabaseManager:
         Inicializa el esquema de la base de datos
         Ejecuta el archivo scripts/init_db.sql
         """
-        import os
         schema_path = os.path.join(
             os.path.dirname(__file__), 
             '..', 
@@ -129,9 +128,7 @@ class DatabaseManager:
 
 
 # =============================================================================
-# INSTANCIA GLOBAL (SINGLETON)
+# INSTANCIA GLOBAL
 # =============================================================================
-# Esta instancia es la que se importa en otros módulos:
-# from core.database import db
 db = DatabaseManager()
 EOF
