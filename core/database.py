@@ -10,7 +10,6 @@ from psycopg2.pool import SimpleConnectionPool
 from contextlib import contextmanager
 from .config import settings
 import logging
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +100,7 @@ class DatabaseManager:
         Inicializa el esquema de la base de datos
         Ejecuta el archivo scripts/init_db.sql
         """
+        import os
         schema_path = os.path.join(
             os.path.dirname(__file__), 
             '..', 
