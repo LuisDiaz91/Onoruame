@@ -190,7 +190,34 @@ class AvanceRepo:
                 "UPDATE avances SET estado = 'procesado' WHERE id = %s",
                 (avance_id,)
             )
-
+            
+class PersonaRepo:
+    """Repositorio para operaciones con personas"""
+    
+    @staticmethod
+    def get_by_ruta(ruta_id):
+        """Obtiene todas las personas de una ruta"""
+        with db.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT pe.* 
+                FROM personas pe
+                JOIN paradas pa ON pe.parada_id = pa.id
+                WHERE pa.ruta_id = %s
+                ORDER BY pa.orden, pe.sub_orden
+            """, (ruta_id,))
+            return cursor.fetchall()
+    
+    @staticmethod
+    def marcar_entregado(persona_id, foto_path=None):
+        """Marca una persona como entregada"""
+        with db.get_cursor() as cursor:
+            cursor.execute("""
+                UPDATE personas 
+                SET estado = 'entregado', 
+                    foto_path = COALESCE(%s, foto_path),
+                    fecha_entrega = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """, (foto_path, persona_id))
 
 class GeocacheRepo:
     """Repositorio para caché de geocodificación"""
