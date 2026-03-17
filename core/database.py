@@ -69,5 +69,25 @@ class DatabaseManager:
             logger.error(f"Health check falló: {e}")
             return False
 
+    def init_schema(self):  # ← ESTE MÉTODO DEBE TENER LOS MISMOS 4 ESPACIOS
+        """Crea las tablas si no existen"""
+        import os
+        schema_path = os.path.join(
+            os.path.dirname(__file__), 
+            '..', 
+            'scripts', 
+            'init_db.sql'
+        )
+        
+        if os.path.exists(schema_path):
+            with open(schema_path, 'r') as f:
+                sql = f.read()
+            
+            with self.get_cursor() as cursor:
+                cursor.execute(sql)
+            print("✅ Esquema de base de datos inicializado")
+        else:
+            print(f"❌ No se encontró {schema_path}")
+            
 # Instancia global
 db = DatabaseManager()
