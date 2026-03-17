@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Configuración rutas
     MAX_EDIFICIOS_POR_RUTA: int = 8
     
+    # Cache
+    CACHE_FILE: str = "geocode_cache.json"
+    
     # API
     SECRET_KEY: str = "super-secret-key"
     
