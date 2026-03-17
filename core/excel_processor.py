@@ -1,4 +1,3 @@
-cat > core/excel_processor.py << 'EOF'
 """
 Procesador de archivos Excel para Onoruame
 Detecta columnas automáticamente y extrae datos
