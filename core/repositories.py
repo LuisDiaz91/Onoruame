@@ -1,6 +1,9 @@
 """
 Repositorios para acceso a base de datos
+<<<<<<< HEAD
 Proporciona métodos CRUD para las entidades del sistema
+=======
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
 """
 
 from .database import db
@@ -9,6 +12,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class RutaRepo:
+<<<<<<< HEAD
     """Repositorio para operaciones con rutas"""
     
     @staticmethod
@@ -34,16 +38,29 @@ class RutaRepo:
                     GROUP BY r.id
                     ORDER BY r.id DESC
                 """)
+=======
+    @staticmethod
+    def list_all(estado=None):
+        with db.get_cursor() as cursor:
+            if estado:
+                cursor.execute("SELECT * FROM rutas WHERE estado = %s ORDER BY id DESC", (estado,))
+            else:
+                cursor.execute("SELECT * FROM rutas ORDER BY id DESC")
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
             return cursor.fetchall()
     
     @staticmethod
     def get(ruta_id):
+<<<<<<< HEAD
         """Obtiene una ruta por su ID"""
+=======
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
         with db.get_cursor() as cursor:
             cursor.execute("SELECT * FROM rutas WHERE id = %s", (ruta_id,))
             return cursor.fetchone()
     
     @staticmethod
+<<<<<<< HEAD
     def get_full(ruta_id):
         """Obtiene una ruta con todas sus paradas y personas"""
         with db.get_cursor() as cursor:
@@ -88,10 +105,21 @@ class RutaRepo:
                 GROUP BY r.id
                 ORDER BY r.id DESC
             """, (estado,))
+=======
+    def cambiar_estado(ruta_id, nuevo_estado):
+        with db.get_cursor() as cursor:
+            cursor.execute("UPDATE rutas SET estado = %s WHERE id = %s", (nuevo_estado, ruta_id))
+    
+    @staticmethod
+    def list_by_estado(estado):
+        with db.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM rutas WHERE estado = %s ORDER BY id DESC", (estado,))
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
             return cursor.fetchall()
     
     @staticmethod
     def asignar(ruta_id, repartidor_id):
+<<<<<<< HEAD
         """Asigna una ruta a un repartidor"""
         with db.get_cursor() as cursor:
             cursor.execute(
@@ -112,19 +140,32 @@ class RepartidorRepo:
     @staticmethod
     def list_all():
         """Lista todos los repartidores"""
+=======
+        with db.get_cursor() as cursor:
+            cursor.execute("UPDATE rutas SET repartidor_id = %s, estado = 'asignada' WHERE id = %s", 
+                         (repartidor_id, ruta_id))
+
+class RepartidorRepo:
+    @staticmethod
+    def list_all():
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
         with db.get_cursor() as cursor:
             cursor.execute("SELECT * FROM repartidores ORDER BY nombre")
             return cursor.fetchall()
     
     @staticmethod
     def list_activos():
+<<<<<<< HEAD
         """Lista repartidores activos"""
+=======
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
         with db.get_cursor() as cursor:
             cursor.execute("SELECT * FROM repartidores WHERE activo = true ORDER BY nombre")
             return cursor.fetchall()
     
     @staticmethod
     def create(nombre, telefono=None, telegram_id=None):
+<<<<<<< HEAD
         """Crea un nuevo repartidor"""
         with db.get_cursor() as cursor:
             cursor.execute("""
@@ -141,6 +182,18 @@ class AvanceRepo:
     @staticmethod
     def pendientes():
         """Lista avances pendientes"""
+=======
+        with db.get_cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO repartidores (nombre, telefono, telegram_id, activo)
+                VALUES (%s, %s, %s, true) RETURNING id
+            """, (nombre, telefono, telegram_id))
+            return cursor.fetchone()['id']
+
+class AvanceRepo:
+    @staticmethod
+    def pendientes():
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT a.*, p.nombre as persona_nombre, r.nombre as repartidor_nombre
@@ -149,11 +202,15 @@ class AvanceRepo:
                 LEFT JOIN repartidores r ON a.repartidor_id = r.id
                 WHERE a.estado = 'pendiente'
                 ORDER BY a.creado_en DESC
+<<<<<<< HEAD
                 LIMIT 200
+=======
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
             """)
             return cursor.fetchall()
     
     @staticmethod
+<<<<<<< HEAD
     def list_all(limit=200):
         """Lista todos los avances"""
         with db.get_cursor() as cursor:
@@ -191,6 +248,19 @@ class AvanceRepo:
                 (avance_id,)
             )
             
+=======
+    def marcar_procesado(avance_id):
+        with db.get_cursor() as cursor:
+            cursor.execute("UPDATE avances SET estado = 'procesado' WHERE id = %s", (avance_id,))
+
+class GeocacheRepo:
+    @staticmethod
+    def stats():
+        with db.get_cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) as total FROM geocache")
+            return cursor.fetchone()
+
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
 class PersonaRepo:
     """Repositorio para operaciones con personas"""
     
@@ -219,6 +289,7 @@ class PersonaRepo:
                 WHERE id = %s
             """, (foto_path, persona_id))
 
+<<<<<<< HEAD
 class GeocacheRepo:
     """Repositorio para caché de geocodificación"""
     
@@ -234,3 +305,5 @@ class GeocacheRepo:
                 FROM geocache
             """)
             return cursor.fetchone()
+=======
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)

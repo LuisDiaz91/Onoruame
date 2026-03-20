@@ -1,0 +1,13 @@
+# Database
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=onoruame
+DB_USER=postgres
+DB_PASSWORD=postgres
+
+# Google Maps
+GOOGLE_MAPS_API_KEY=AIzaSyBeUr2C3SDkwY7zIrYcB6agDni9XDlWrFY
+
+# Origen
+ORIGEN_COORDS=19.4283717,-99.1430307
+ORIGEN_NOMBRE=TSJCDMX - Niños Héroes 150

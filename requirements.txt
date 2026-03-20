@@ -12,4 +12,7 @@ folium==0.15.0
 polyline==2.0.2
 openpyxl==3.1.2
 xlrd==2.0.1
+<<<<<<< HEAD
 EOF
+=======
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)

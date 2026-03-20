@@ -8,6 +8,7 @@ from psycopg2.pool import SimpleConnectionPool
 from contextlib import contextmanager
 from .config import settings
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,16 @@ class DatabaseManager:
             finally:
                 cursor.close()
     
+<<<<<<< HEAD
+=======
+    def execute(self, query: str, params: tuple = None):
+        with self.get_cursor() as cursor:
+            cursor.execute(query, params or ())
+            if cursor.description:
+                return cursor.fetchall()
+            return None
+    
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
     def health_check(self) -> bool:
         try:
             with self.get_cursor() as cursor:
@@ -69,9 +80,14 @@ class DatabaseManager:
             logger.error(f"Health check falló: {e}")
             return False
 
+<<<<<<< HEAD
     def init_schema(self):  # ← ESTE MÉTODO DEBE TENER LOS MISMOS 4 ESPACIOS
         """Crea las tablas si no existen"""
         import os
+=======
+    def init_schema(self):
+        """Crea las tablas si no existen"""
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
         schema_path = os.path.join(
             os.path.dirname(__file__), 
             '..', 
@@ -80,6 +96,7 @@ class DatabaseManager:
         )
         
         if os.path.exists(schema_path):
+<<<<<<< HEAD
             with open(schema_path, 'r') as f:
                 sql = f.read()
             
@@ -89,5 +106,22 @@ class DatabaseManager:
         else:
             print(f"❌ No se encontró {schema_path}")
             
+=======
+            try:
+                with open(schema_path, 'r') as f:
+                    sql = f.read()
+                
+                with self.get_cursor() as cursor:
+                    cursor.execute(sql)
+                print("✅ Esquema de base de datos inicializado")
+                return True
+            except Exception as e:
+                print(f"❌ Error ejecutando schema: {e}")
+                return False
+        else:
+            print(f"❌ No se encontró {schema_path}")
+            return False
+
+>>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
 # Instancia global
 db = DatabaseManager()
