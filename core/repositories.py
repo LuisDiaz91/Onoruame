@@ -1,309 +1,478 @@
+# core/repositories.py
 """
-Repositorios para acceso a base de datos
-<<<<<<< HEAD
-Proporciona métodos CRUD para las entidades del sistema
-=======
->>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
+Repositorios para acceso a base de datos.
+Toda operación de BD pasa por aquí — ni la API ni la GUI tocan SQL directamente.
 """
+import logging
+from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
 
 from .database import db
-import logging
 
 logger = logging.getLogger(__name__)
 
+
+# ─────────────────────────────────────────────────────────────
+# RUTAS
+# ─────────────────────────────────────────────────────────────
+
 class RutaRepo:
-<<<<<<< HEAD
-    """Repositorio para operaciones con rutas"""
-    
+
     @staticmethod
-    def list_all(estado=None):
-        """Lista todas las rutas, opcionalmente filtradas por estado"""
-        with db.get_cursor() as cursor:
+    def list_all(estado: Optional[str] = None) -> List[Dict]:
+        with db.get_cursor() as cur:
             if estado:
-                cursor.execute("""
-                    SELECT r.*, COUNT(p.id) as total_paradas, 
-                           SUM(p.total_personas) as total_personas
+                cur.execute("""
+                    SELECT r.*,
+                           COUNT(p.id)       AS total_paradas,
+                           SUM(p.total_personas) AS total_personas,
+                           rep.nombre        AS repartidor_nombre
                     FROM rutas r
-                    LEFT JOIN paradas p ON r.id = p.ruta_id
+                    LEFT JOIN paradas      p   ON r.id = p.ruta_id
+                    LEFT JOIN repartidores rep ON r.repartidor_id = rep.id
                     WHERE r.estado = %s
-                    GROUP BY r.id
+                    GROUP BY r.id, rep.nombre
                     ORDER BY r.id DESC
                 """, (estado,))
             else:
-                cursor.execute("""
-                    SELECT r.*, COUNT(p.id) as total_paradas, 
-                           SUM(p.total_personas) as total_personas
+                cur.execute("""
+                    SELECT r.*,
+                           COUNT(p.id)           AS total_paradas,
+                           SUM(p.total_personas) AS total_personas,
+                           rep.nombre            AS repartidor_nombre
                     FROM rutas r
-                    LEFT JOIN paradas p ON r.id = p.ruta_id
-                    GROUP BY r.id
+                    LEFT JOIN paradas      p   ON r.id = p.ruta_id
+                    LEFT JOIN repartidores rep ON r.repartidor_id = rep.id
+                    GROUP BY r.id, rep.nombre
                     ORDER BY r.id DESC
                 """)
-=======
+            return [dict(r) for r in cur.fetchall()]
+
     @staticmethod
-    def list_all(estado=None):
-        with db.get_cursor() as cursor:
-            if estado:
-                cursor.execute("SELECT * FROM rutas WHERE estado = %s ORDER BY id DESC", (estado,))
-            else:
-                cursor.execute("SELECT * FROM rutas ORDER BY id DESC")
->>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
-            return cursor.fetchall()
-    
+    def list_by_estado(estado: str) -> List[Dict]:
+        return RutaRepo.list_all(estado)
+
     @staticmethod
-    def get(ruta_id):
-<<<<<<< HEAD
-        """Obtiene una ruta por su ID"""
-=======
->>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
-        with db.get_cursor() as cursor:
-            cursor.execute("SELECT * FROM rutas WHERE id = %s", (ruta_id,))
-            return cursor.fetchone()
-    
+    def get(ruta_id: int) -> Optional[Dict]:
+        with db.get_cursor() as cur:
+            cur.execute("SELECT * FROM rutas WHERE id = %s", (ruta_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
     @staticmethod
-<<<<<<< HEAD
-    def get_full(ruta_id):
-        """Obtiene una ruta con todas sus paradas y personas"""
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT r.*, 
-                       json_agg(json_build_object(
-                           'direccion_original', p.direccion_original,
-                           'personas', (
-                               SELECT json_agg(json_build_object(
-                                   'nombre', pe.nombre,
-                                   'estado', pe.estado
-                               ))
-                               FROM personas pe
-                               WHERE pe.parada_id = p.id
-                           )
-                       )) as paradas
-                FROM rutas r
-                LEFT JOIN paradas p ON r.id = p.ruta_id
-                WHERE r.id = %s
-                GROUP BY r.id
+    def get_full(ruta_id: int) -> Optional[Dict]:
+        """Ruta + paradas + personas en una sola consulta."""
+        ruta = RutaRepo.get(ruta_id)
+        if not ruta:
+            return None
+        with db.get_cursor() as cur:
+            cur.execute("""
+                SELECT p.*,
+                       COALESCE(
+                           json_agg(
+                               json_build_object(
+                                   'id',              pe.id,
+                                   'sub_orden',       pe.sub_orden,
+                                   'nombre',          pe.nombre,
+                                   'nombre_completo', pe.nombre_completo,
+                                   'adscripcion',     pe.adscripcion,
+                                   'alcaldia',        pe.alcaldia,
+                                   'estado',          pe.estado,
+                                   'notas',           pe.notas
+                               ) ORDER BY pe.sub_orden
+                           ) FILTER (WHERE pe.id IS NOT NULL),
+                           '[]'
+                       ) AS personas
+                FROM paradas p
+                LEFT JOIN personas pe ON pe.parada_id = p.id
+                WHERE p.ruta_id = %s
+                GROUP BY p.id
+                ORDER BY p.orden
             """, (ruta_id,))
-            return cursor.fetchone()
-    
+            ruta["paradas"] = [dict(r) for r in cur.fetchall()]
+        return ruta
+
     @staticmethod
-    def cambiar_estado(ruta_id, nuevo_estado):
-        """Cambia el estado de una ruta"""
-        with db.get_cursor() as cursor:
-            cursor.execute(
+    def cambiar_estado(ruta_id: int, nuevo_estado: str):
+        with db.get_cursor() as cur:
+            cur.execute(
                 "UPDATE rutas SET estado = %s WHERE id = %s",
                 (nuevo_estado, ruta_id)
             )
-    
+
     @staticmethod
-    def list_by_estado(estado):
-        """Lista rutas por estado"""
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT r.*, COUNT(p.id) as total_paradas
-                FROM rutas r
-                LEFT JOIN paradas p ON r.id = p.ruta_id
-                WHERE r.estado = %s
-                GROUP BY r.id
-                ORDER BY r.id DESC
-            """, (estado,))
-=======
-    def cambiar_estado(ruta_id, nuevo_estado):
-        with db.get_cursor() as cursor:
-            cursor.execute("UPDATE rutas SET estado = %s WHERE id = %s", (nuevo_estado, ruta_id))
-    
-    @staticmethod
-    def list_by_estado(estado):
-        with db.get_cursor() as cursor:
-            cursor.execute("SELECT * FROM rutas WHERE estado = %s ORDER BY id DESC", (estado,))
->>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
-            return cursor.fetchall()
-    
-    @staticmethod
-    def asignar(ruta_id, repartidor_id):
-<<<<<<< HEAD
-        """Asigna una ruta a un repartidor"""
-        with db.get_cursor() as cursor:
-            cursor.execute(
+    def asignar(ruta_id: int, repartidor_id: str):
+        with db.get_cursor() as cur:
+            cur.execute(
                 "UPDATE rutas SET repartidor_id = %s, estado = 'asignada' WHERE id = %s",
                 (repartidor_id, ruta_id)
             )
-    
-    @staticmethod
-    def crear_desde_generador(ruta):
-        """Guarda una ruta generada en la base de datos"""
-        # Esta función se implementará después
-        pass
 
-
-class RepartidorRepo:
-    """Repositorio para operaciones con repartidores"""
-    
     @staticmethod
-    def list_all():
-        """Lista todos los repartidores"""
-=======
-        with db.get_cursor() as cursor:
-            cursor.execute("UPDATE rutas SET repartidor_id = %s, estado = 'asignada' WHERE id = %s", 
-                         (repartidor_id, ruta_id))
-
-class RepartidorRepo:
-    @staticmethod
-    def list_all():
->>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
-        with db.get_cursor() as cursor:
-            cursor.execute("SELECT * FROM repartidores ORDER BY nombre")
-            return cursor.fetchall()
-    
-    @staticmethod
-    def list_activos():
-<<<<<<< HEAD
-        """Lista repartidores activos"""
-=======
->>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
-        with db.get_cursor() as cursor:
-            cursor.execute("SELECT * FROM repartidores WHERE activo = true ORDER BY nombre")
-            return cursor.fetchall()
-    
-    @staticmethod
-    def create(nombre, telefono=None, telegram_id=None):
-<<<<<<< HEAD
-        """Crea un nuevo repartidor"""
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                INSERT INTO repartidores (nombre, telefono, telegram_id, activo)
-                VALUES (%s, %s, %s, true)
+    def create(zona: str, origen_nombre: str, origen_coords: str) -> int:
+        with db.get_cursor() as cur:
+            cur.execute("""
+                INSERT INTO rutas (zona, origen_nombre, origen_coords)
+                VALUES (%s, %s, %s)
                 RETURNING id
-            """, (nombre, telefono, telegram_id))
-            return cursor.fetchone()['id']
+            """, (zona, origen_nombre, origen_coords))
+            return cur.fetchone()["id"]
 
+    @staticmethod
+    def update_metricas(ruta_id: int, distancia_km: float, tiempo_min: int,
+                        polyline_data: str, google_maps_url: str,
+                        total_paradas: int, total_personas: int):
+        with db.get_cursor() as cur:
+            cur.execute("""
+                UPDATE rutas SET
+                    distancia_km    = %s,
+                    tiempo_min      = %s,
+                    polyline_data   = %s,
+                    google_maps_url = %s,
+                    total_paradas   = %s,
+                    total_personas  = %s
+                WHERE id = %s
+            """, (distancia_km, tiempo_min, polyline_data,
+                  google_maps_url, total_paradas, total_personas, ruta_id))
 
-class AvanceRepo:
-    """Repositorio para operaciones con avances/entregas"""
-    
     @staticmethod
-    def pendientes():
-        """Lista avances pendientes"""
-=======
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                INSERT INTO repartidores (nombre, telefono, telegram_id, activo)
-                VALUES (%s, %s, %s, true) RETURNING id
-            """, (nombre, telefono, telegram_id))
-            return cursor.fetchone()['id']
+    def crear_desde_generador(ruta) -> int:
+        """Persiste una Ruta (dataclass) completa en la BD."""
+        import urllib.parse
 
-class AvanceRepo:
-    @staticmethod
-    def pendientes():
->>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT a.*, p.nombre as persona_nombre, r.nombre as repartidor_nombre
-                FROM avances a
-                LEFT JOIN personas p ON a.persona_id = p.id
-                LEFT JOIN repartidores r ON a.repartidor_id = r.id
-                WHERE a.estado = 'pendiente'
-                ORDER BY a.creado_en DESC
-<<<<<<< HEAD
-                LIMIT 200
-=======
->>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
-            """)
-            return cursor.fetchall()
-    
-    @staticmethod
-<<<<<<< HEAD
-    def list_all(limit=200):
-        """Lista todos los avances"""
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT a.*, p.nombre as persona_nombre, r.nombre as repartidor_nombre
-                FROM avances a
-                LEFT JOIN personas p ON a.persona_id = p.id
-                LEFT JOIN repartidores r ON a.repartidor_id = r.id
-                ORDER BY a.creado_en DESC
-                LIMIT %s
-            """, (limit,))
-            return cursor.fetchall()
-    
-    @staticmethod
-    def procesados(limit=200):
-        """Lista avances procesados"""
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT a.*, p.nombre as persona_nombre, r.nombre as repartidor_nombre
-                FROM avances a
-                LEFT JOIN personas p ON a.persona_id = p.id
-                LEFT JOIN repartidores r ON a.repartidor_id = r.id
-                WHERE a.estado = 'procesado'
-                ORDER BY a.creado_en DESC
-                LIMIT %s
-            """, (limit,))
-            return cursor.fetchall()
-    
-    @staticmethod
-    def marcar_procesado(avance_id):
-        """Marca un avance como procesado"""
-        with db.get_cursor() as cursor:
-            cursor.execute(
-                "UPDATE avances SET estado = 'procesado' WHERE id = %s",
-                (avance_id,)
+        # URL Google Maps
+        dirs = [e.direccion_original for e in ruta.edificios if e.direccion_original]
+        google_maps_url = ""
+        if dirs:
+            from core.config import settings
+            base   = "https://www.google.com/maps/dir/?api=1"
+            origen = urllib.parse.quote(f"{settings.ORIGEN_NOMBRE}, Ciudad de México")
+            destino = urllib.parse.quote(dirs[-1])
+            if len(dirs) == 1:
+                google_maps_url = f"{base}&origin={origen}&destination={destino}&travelmode=driving"
+            else:
+                wps = "|".join(urllib.parse.quote(d) for d in dirs[:-1])
+                google_maps_url = f"{base}&origin={origen}&destination={destino}&waypoints={wps}&travelmode=driving"
+
+        from core.config import settings as s
+        ruta_id = RutaRepo.create(ruta.zona, s.ORIGEN_NOMBRE, s.ORIGEN_COORDS)
+
+        total_personas = 0
+        for orden, edificio in enumerate(ruta.edificios, 1):
+            parada_id = ParadaRepo.create(
+                ruta_id               = ruta_id,
+                orden                 = orden,
+                direccion_original    = edificio.direccion_original,
+                direccion_normalizada = edificio.direccion_normalizada,
+                alcaldia              = edificio.alcaldia,
+                dependencia_principal = edificio.dependencia_principal,
+                coords                = edificio.coordenadas,
             )
-            
-=======
-    def marcar_procesado(avance_id):
-        with db.get_cursor() as cursor:
-            cursor.execute("UPDATE avances SET estado = 'procesado' WHERE id = %s", (avance_id,))
+            for sub, persona in enumerate(edificio.personas, 1):
+                PersonaRepo.create(
+                    parada_id       = parada_id,
+                    sub_orden       = sub,
+                    nombre_completo = persona.get('nombre_completo', ''),
+                    nombre          = persona.get('nombre', ''),
+                    adscripcion     = persona.get('adscripcion', ''),
+                    direccion       = persona.get('direccion', ''),
+                    alcaldia        = persona.get('alcaldia', ''),
+                    notas           = persona.get('notas', ''),
+                )
+                total_personas += 1
 
-class GeocacheRepo:
+        RutaRepo.update_metricas(
+            ruta_id         = ruta_id,
+            distancia_km    = ruta.distancia_km,
+            tiempo_min      = int(ruta.tiempo_min),
+            polyline_data   = ruta.polyline_data,
+            google_maps_url = google_maps_url,
+            total_paradas   = ruta.total_edificios,
+            total_personas  = total_personas,
+        )
+        logger.info(f"✅ Ruta guardada en DB: id={ruta_id} zona={ruta.zona} "
+                    f"paradas={ruta.total_edificios} personas={total_personas}")
+        return ruta_id
+
     @staticmethod
-    def stats():
-        with db.get_cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) as total FROM geocache")
-            return cursor.fetchone()
+    def resumen() -> List[Dict]:
+        with db.get_cursor() as cur:
+            cur.execute("""
+                SELECT r.id, r.zona, r.estado, r.distancia_km, r.tiempo_min,
+                       r.total_paradas, r.total_personas, r.creado_en,
+                       rep.nombre AS repartidor
+                FROM rutas r
+                LEFT JOIN repartidores rep ON rep.id = r.repartidor_id
+                ORDER BY r.id
+            """)
+            return [dict(r) for r in cur.fetchall()]
 
->>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
+
+# ─────────────────────────────────────────────────────────────
+# PARADAS
+# ─────────────────────────────────────────────────────────────
+
+class ParadaRepo:
+
+    @staticmethod
+    def create(ruta_id: int, orden: int, direccion_original: str,
+               direccion_normalizada: str, alcaldia: str,
+               dependencia_principal: str,
+               coords: Optional[Tuple[float, float]]) -> int:
+        lat = coords[0] if coords else None
+        lng = coords[1] if coords else None
+        with db.get_cursor() as cur:
+            cur.execute("""
+                INSERT INTO paradas
+                    (ruta_id, orden, direccion_original, direccion_normalizada,
+                     alcaldia, dependencia_principal, lat, lng)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (ruta_id, orden, direccion_original, direccion_normalizada,
+                  alcaldia, dependencia_principal, lat, lng))
+            return cur.fetchone()["id"]
+
+    @staticmethod
+    def cambiar_estado(parada_id: int, estado: str):
+        with db.get_cursor() as cur:
+            cur.execute(
+                "UPDATE paradas SET estado = %s WHERE id = %s",
+                (estado, parada_id)
+            )
+
+
+# ─────────────────────────────────────────────────────────────
+# PERSONAS
+# ─────────────────────────────────────────────────────────────
+
 class PersonaRepo:
-    """Repositorio para operaciones con personas"""
-    
+
     @staticmethod
-    def get_by_ruta(ruta_id):
-        """Obtiene todas las personas de una ruta"""
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT pe.* 
+    def create(parada_id: int, sub_orden: int, nombre_completo: str,
+               nombre: str, adscripcion: str, direccion: str,
+               alcaldia: str, notas: str = "") -> int:
+        with db.get_cursor() as cur:
+            cur.execute("""
+                INSERT INTO personas
+                    (parada_id, sub_orden, nombre_completo, nombre,
+                     adscripcion, direccion, alcaldia, notas)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (parada_id, sub_orden, nombre_completo, nombre,
+                  adscripcion, direccion, alcaldia, notas))
+            return cur.fetchone()["id"]
+
+    @staticmethod
+    def get_by_ruta(ruta_id: int) -> List[Dict]:
+        with db.get_cursor() as cur:
+            cur.execute("""
+                SELECT pe.*
                 FROM personas pe
                 JOIN paradas pa ON pe.parada_id = pa.id
                 WHERE pa.ruta_id = %s
                 ORDER BY pa.orden, pe.sub_orden
             """, (ruta_id,))
-            return cursor.fetchall()
-    
+            return [dict(r) for r in cur.fetchall()]
+
     @staticmethod
-    def marcar_entregado(persona_id, foto_path=None):
-        """Marca una persona como entregada"""
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                UPDATE personas 
-                SET estado = 'entregado', 
+    def buscar(nombre: str, ruta_id: Optional[int] = None) -> List[Dict]:
+        """Búsqueda fuzzy usando pg_trgm."""
+        with db.get_cursor() as cur:
+            if ruta_id:
+                cur.execute("""
+                    SELECT pe.*, pa.ruta_id, pa.id AS parada_id
+                    FROM personas pe
+                    JOIN paradas pa ON pa.id = pe.parada_id
+                    WHERE pa.ruta_id = %s AND pe.nombre %% %s
+                    ORDER BY similarity(pe.nombre, %s) DESC
+                    LIMIT 5
+                """, (ruta_id, nombre, nombre))
+            else:
+                cur.execute("""
+                    SELECT pe.*, pa.ruta_id, pa.id AS parada_id
+                    FROM personas pe
+                    JOIN paradas pa ON pa.id = pe.parada_id
+                    WHERE pe.nombre %% %s
+                    ORDER BY similarity(pe.nombre, %s) DESC
+                    LIMIT 10
+                """, (nombre, nombre))
+            return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def cambiar_estado(persona_id: int, estado: str):
+        with db.get_cursor() as cur:
+            cur.execute(
+                "UPDATE personas SET estado = %s WHERE id = %s",
+                (estado, persona_id)
+            )
+
+    @staticmethod
+    def marcar_entregado(persona_id: int, foto_path: Optional[str] = None):
+        with db.get_cursor() as cur:
+            cur.execute("""
+                UPDATE personas
+                SET estado = 'entregado',
                     foto_path = COALESCE(%s, foto_path),
                     fecha_entrega = CURRENT_TIMESTAMP
                 WHERE id = %s
             """, (foto_path, persona_id))
 
-<<<<<<< HEAD
-class GeocacheRepo:
-    """Repositorio para caché de geocodificación"""
-    
+
+# ─────────────────────────────────────────────────────────────
+# REPARTIDORES
+# ─────────────────────────────────────────────────────────────
+
+class RepartidorRepo:
+
     @staticmethod
-    def stats():
-        """Obtiene estadísticas del caché"""
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT 
-                    COUNT(*) as total,
-                    SUM(CASE WHEN exitoso THEN 1 ELSE 0 END) as exitosos,
-                    SUM(CASE WHEN NOT exitoso THEN 1 ELSE 0 END) as fallidos
-                FROM geocache
+    def list_all() -> List[Dict]:
+        with db.get_cursor() as cur:
+            cur.execute("SELECT * FROM repartidores ORDER BY nombre")
+            return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def list_activos() -> List[Dict]:
+        with db.get_cursor() as cur:
+            cur.execute(
+                "SELECT * FROM repartidores WHERE activo = true ORDER BY nombre"
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def get(repartidor_id: str) -> Optional[Dict]:
+        with db.get_cursor() as cur:
+            cur.execute("SELECT * FROM repartidores WHERE id = %s", (repartidor_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def create(nombre: str, telefono: Optional[str] = None,
+               telegram_id: Optional[str] = None) -> int:
+        with db.get_cursor() as cur:
+            cur.execute("""
+                INSERT INTO repartidores (nombre, telefono, telegram_id, activo)
+                VALUES (%s, %s, %s, true)
+                ON CONFLICT (nombre) DO UPDATE
+                    SET telefono    = EXCLUDED.telefono,
+                        telegram_id = EXCLUDED.telegram_id
+                RETURNING id
+            """, (nombre, telefono, telegram_id))
+            return cur.fetchone()["id"]
+
+
+# ─────────────────────────────────────────────────────────────
+# AVANCES
+# ─────────────────────────────────────────────────────────────
+
+class AvanceRepo:
+
+    @staticmethod
+    def pendientes() -> List[Dict]:
+        with db.get_cursor() as cur:
+            cur.execute("""
+                SELECT a.*, p.nombre AS persona_nombre,
+                       r.nombre AS repartidor_nombre
+                FROM avances a
+                LEFT JOIN personas     p ON a.persona_id    = p.id
+                LEFT JOIN repartidores r ON a.repartidor_id = r.id
+                WHERE a.estado = 'pendiente'
+                ORDER BY a.creado_en DESC
+                LIMIT 200
             """)
-            return cursor.fetchone()
-=======
->>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
+            return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def list_all(limit: int = 200) -> List[Dict]:
+        with db.get_cursor() as cur:
+            cur.execute("""
+                SELECT a.*, p.nombre AS persona_nombre,
+                       r.nombre AS repartidor_nombre
+                FROM avances a
+                LEFT JOIN personas     p ON a.persona_id    = p.id
+                LEFT JOIN repartidores r ON a.repartidor_id = r.id
+                ORDER BY a.creado_en DESC
+                LIMIT %s
+            """, (limit,))
+            return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def procesados(limit: int = 200) -> List[Dict]:
+        with db.get_cursor() as cur:
+            cur.execute("""
+                SELECT a.*, p.nombre AS persona_nombre,
+                       r.nombre AS repartidor_nombre
+                FROM avances a
+                LEFT JOIN personas     p ON a.persona_id    = p.id
+                LEFT JOIN repartidores r ON a.repartidor_id = r.id
+                WHERE a.estado = 'procesado'
+                ORDER BY a.creado_en DESC
+                LIMIT %s
+            """, (limit,))
+            return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def marcar_procesado(avance_id) -> None:
+        with db.get_cursor() as cur:
+            cur.execute(
+                "UPDATE avances SET estado = 'procesado', procesado_en = NOW() WHERE id = %s",
+                (str(avance_id),)
+            )
+
+    @staticmethod
+    def create(ruta_id: int, repartidor_id: Optional[str],
+               persona_id: Optional[int], parada_id: Optional[int],
+               foto_path: str = "", notas: str = "",
+               tipo: str = "entrega",
+               timestamp_bot: Optional[datetime] = None) -> str:
+        with db.get_cursor() as cur:
+            cur.execute("""
+                INSERT INTO avances
+                    (ruta_id, repartidor_id, persona_id, parada_id,
+                     foto_path, notas, tipo, timestamp_bot)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (ruta_id, repartidor_id, persona_id, parada_id,
+                  foto_path, notas, tipo, timestamp_bot or datetime.utcnow()))
+            return str(cur.fetchone()["id"])
+
+    @staticmethod
+    def by_ruta(ruta_id: int) -> List[Dict]:
+        with db.get_cursor() as cur:
+            cur.execute("""
+                SELECT a.*, p.nombre AS persona_nombre,
+                       r.nombre AS repartidor_nombre
+                FROM avances a
+                LEFT JOIN personas     p ON a.persona_id    = p.id
+                LEFT JOIN repartidores r ON a.repartidor_id = r.id
+                WHERE a.ruta_id = %s
+                ORDER BY a.creado_en DESC
+            """, (ruta_id,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+# ─────────────────────────────────────────────────────────────
+# GEOCODING CACHE
+# ─────────────────────────────────────────────────────────────
+
+class GeocacheRepo:
+
+    @staticmethod
+    def stats() -> Dict:
+        with db.get_cursor() as cur:
+            cur.execute("""
+                SELECT
+                    COUNT(*)                              AS total,
+                    COUNT(*) FILTER (WHERE exito = true)  AS exitosos,
+                    COUNT(*) FILTER (WHERE exito = false) AS fallidos
+                FROM geocoding_cache
+            """)
+            row = cur.fetchone()
+            return dict(row) if row else {'total': 0, 'exitosos': 0, 'fallidos': 0}
+
+    @staticmethod
+    def cleanup(days: int = 30):
+        with db.get_cursor() as cur:
+            cur.execute(
+                "DELETE FROM geocoding_cache WHERE usado_en < NOW() - INTERVAL '%s days'",
+                (days,)
+            )
