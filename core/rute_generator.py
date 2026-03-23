@@ -1,11 +1,8 @@
 """
-GENERADOR DE RUTAS - VERSIÓN DUAL (Claude + Tus Modelos)
-Características:
-- Algoritmo dual: vecino cercano (pocos) / k-means (muchos)
-- Guarda en PostgreSQL vía repositories
-- Usa tus dataclasses (Persona, Edificio, Ruta)
-- Optimizado para 50+ repartidores
-- CORRECIONES: Geocoder sin api_key, to_dict('records'), validación Directions API
+GENERADOR DE RUTAS - VERSIÓN DUAL
+Algoritmo dual: vecino cercano (pocos) / k-means (muchos)
+Guarda en PostgreSQL vía repositories
+Optimizado para 50+ repartidores
 """
 
 import math
@@ -17,7 +14,7 @@ import requests
 from .models import Persona, Edificio, Ruta
 from .geocoder import Geocoder
 from .repositories import RutaRepository
-from .config import CONFIG
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +25,11 @@ class RouteGenerator:
     - Si hay > 24 edificios: K-means + Vecino (escalable)
     """
     
-    # Colores para mapas (de tu código original)
     COLORES_ZONA = {
         'CENTRO': '#FF6B6B', 'SUR': '#4ECDC4', 'ORIENTE': '#45B7D1',
         'SUR_ORIENTE': '#96CEB4', 'OTRAS': '#FECA57', 'MIXTA': '#9B59B6'
     }
     
-    # Zonas de CDMX (completas)
     ZONAS_ALCALDIAS = {
         'CENTRO':   ['CUAUHTEMOC', 'MIGUEL HIDALGO', 'BENITO JUAREZ', 'VENUSTIANO CARRANZA'],
         'SUR':      ['ALVARO OBREGON', 'COYOACAN', 'TLALPAN', 'MAGDALENA CONTRERAS',
@@ -44,38 +39,25 @@ class RouteGenerator:
         'PONIENTE': ['CUAJIMALPA'],
     }
     
-    # Parámetros de optimización
     MAX_PARADAS = 8
     MIN_PARADAS = 3
-    DISTANCIA_MAX = 5.0  # km - para cortar rutas muy dispersas
-    UMBRAL_KMEANS = 24    # >24 edificios → usar k-means
+    DISTANCIA_MAX = 5.0
+    UMBRAL_KMEANS = 24
     
     def __init__(self, api_key: str, origen_coords: str, origen_nombre: str):
         self.api_key = api_key
         self.origen_coords = origen_coords
         self.origen_nombre = origen_nombre
         self.origen = tuple(map(float, origen_coords.split(',')))
-        # CORRECCIÓN: Geocoder sin pasar api_key (la toma de settings)
         self.geocoder = Geocoder()
     
-    # ----------------------------------------------------------------------
-    # API PÚBLICA
-    # ----------------------------------------------------------------------
-    
     def procesar_dataframe(self, df: pd.DataFrame) -> List[Ruta]:
-        """
-        Punto de entrada principal.
-        Recibe DataFrame → retorna rutas (ya guardadas en BD)
-        """
+        """Procesa DataFrame y genera rutas"""
         logger.info(f"Procesando {len(df)} registros...")
         
-        # 1. Agrupar por edificios
         edificios_por_zona = self.agrupar_edificios(df)
-        
-        # 2. Crear rutas (algoritmo dual)
         rutas = self.crear_rutas(edificios_por_zona)
         
-        # 3. Guardar en PostgreSQL
         for ruta in rutas:
             RutaRepository.crear_desde_generador(ruta)
             logger.info(f"✅ Ruta {ruta.id} guardada en BD")
@@ -84,24 +66,17 @@ class RouteGenerator:
         return rutas
     
     def agrupar_edificios(self, df: pd.DataFrame) -> Dict[str, List[Edificio]]:
-        """
-        Agrupa personas por dirección única.
-        Cada dirección = un edificio (parada)
-        CORRECCIÓN: usa to_dict('records') para mejor performance
-        """
+        """Agrupa personas por dirección única"""
         logger.info("Agrupando personas por edificio...")
         edificios_dict: Dict[str, Edificio] = {}
         
-        # MEJORA: to_dict('records') es MÁS RÁPIDO que iterrows()
         for fila_dict in df.to_dict('records'):
-            # Convertir a Series para compatibilidad con _extraer_persona
             fila = pd.Series(fila_dict)
             persona = self._extraer_persona(fila)
             
             if not persona.direccion or persona.direccion in ['', 'nan']:
                 continue
             
-            # Normalizar dirección
             dir_norm = self.geocoder.normalizar_direccion(persona.direccion)
             clave = f"{dir_norm}_{persona.alcaldia}".lower()
             
@@ -120,7 +95,6 @@ class RouteGenerator:
             
             edificios_dict[clave].personas.append(persona)
         
-        # Agrupar por zona
         por_zona: Dict[str, List[Edificio]] = {}
         for edificio in edificios_dict.values():
             por_zona.setdefault(edificio.zona, []).append(edificio)
@@ -132,11 +106,7 @@ class RouteGenerator:
         return por_zona
     
     def crear_rutas(self, edificios_por_zona: Dict[str, List[Edificio]]) -> List[Ruta]:
-        """
-        ALGORITMO DUAL:
-        - ≤24 edificios: Vecino más cercano
-        - >24 edificios: K-means + Vecino
-        """
+        """Algoritmo dual: vecino cercano o k-means"""
         todas_rutas = []
         ruta_id = 1
         
@@ -147,17 +117,15 @@ class RouteGenerator:
             total = len(edificios)
             logger.info(f"Zona {zona}: {total} edificios")
             
-            # Separar con/sin coordenadas
             con_coords = [e for e in edificios if e.coordenadas]
             sin_coords = [e for e in edificios if not e.coordenadas]
             
-            # DECISIÓN: ¿Vecino o K-means?
             if total <= self.UMBRAL_KMEANS or len(con_coords) < self.MIN_PARADAS * 2:
-                # CASO A: Vecino más cercano (preciso)
                 logger.info(f"  Usando Vecino más cercano")
                 rutas_zona = self._vecino_mas_cercano(con_coords, zona, ruta_id)
+                if rutas_zona:
+                    ruta_id = max(r.id for r in rutas_zona) + 1
             else:
-                # CASO B: K-means + Vecino (escalable)
                 k = self._calcular_k(total)
                 logger.info(f"  Usando K-means ({k} clusters)")
                 
@@ -172,10 +140,6 @@ class RouteGenerator:
                     if sub:
                         ruta_id = max(r.id for r in sub) + 1
             
-            if rutas_zona:
-                ruta_id = max(r.id for r in rutas_zona) + 1
-            
-            # Distribuir edificios sin coordenadas
             if sin_coords:
                 if rutas_zona:
                     self._distribuir_sin_coords(rutas_zona, sin_coords)
@@ -187,25 +151,17 @@ class RouteGenerator:
             
             todas_rutas.extend(rutas_zona)
         
-        # Fusionar rutas pequeñas
         rutas_finales = self._fusionar_pequenas(todas_rutas)
         
-        # Optimizar con Google Maps (solo si vale la pena)
         for ruta in rutas_finales:
-            # CORRECCIÓN: solo llamar si hay más de 3 edificios (ahorra $$)
             if len([e for e in ruta.edificios if e.coordenadas]) >= 3:
                 self._optimizar_con_google(ruta)
         
-        # Renumerar IDs
         for i, r in enumerate(rutas_finales, 1):
             r.id = i
         
         logger.info(f"✅ {len(rutas_finales)} rutas generadas")
         return rutas_finales
-    
-    # ----------------------------------------------------------------------
-    # ALGORITMOS PRINCIPALES
-    # ----------------------------------------------------------------------
     
     def _vecino_mas_cercano(self, edificios: List[Edificio], zona: str, inicio_id: int) -> List[Ruta]:
         """Vecino más cercano con mínimo de paradas"""
@@ -220,18 +176,15 @@ class RouteGenerator:
             ruta_actual = []
             punto_actual = self.origen
             
-            # Primer edificio: el más cercano al origen
             primero = min(disponibles, key=lambda e: self._haversine(self.origen, e.coordenadas))
             ruta_actual.append(primero)
             disponibles.remove(primero)
             punto_actual = primero.coordenadas
             
-            # Siguientes: vecino más cercano al último
             while len(ruta_actual) < self.MAX_PARADAS and disponibles:
                 siguiente = min(disponibles, key=lambda e: self._haversine(punto_actual, e.coordenadas))
                 distancia = self._haversine(punto_actual, siguiente.coordenadas)
                 
-                # Si está muy lejos y ya tenemos mínimo, terminar
                 if distancia > self.DISTANCIA_MAX and len(ruta_actual) >= self.MIN_PARADAS:
                     break
                 
@@ -248,11 +201,9 @@ class RouteGenerator:
                 ))
                 ruta_id += 1
             else:
-                # No cumple mínimo, regresar y terminar
                 disponibles.extend(ruta_actual)
                 break
         
-        # Reabsorber sobrantes
         if disponibles and rutas:
             for edificio in disponibles:
                 for r in rutas:
@@ -263,20 +214,17 @@ class RouteGenerator:
         return rutas
     
     def _kmeans_geo(self, edificios: List[Edificio], k: int, max_iter: int = 15) -> List[List[Edificio]]:
-        """K-means con distancia Haversine (para CDMX)"""
+        """K-means con distancia Haversine"""
         if k >= len(edificios):
             return [[e] for e in edificios]
         
-        # Inicialización K-means++
         centroides: List[Tuple[float, float]] = []
         restantes = edificios.copy()
         
-        # Primer centroide: el más lejano al origen
         primero = max(restantes, key=lambda e: self._haversine(self.origen, e.coordenadas))
         centroides.append(primero.coordenadas)
         restantes.remove(primero)
         
-        # Siguientes: los más lejanos a los ya elegidos
         while len(centroides) < k and restantes:
             mas_lejano = max(
                 restantes,
@@ -285,7 +233,6 @@ class RouteGenerator:
             centroides.append(mas_lejano.coordenadas)
             restantes.remove(mas_lejano)
         
-        # Iteraciones
         grupos: List[List[Edificio]] = [[] for _ in range(k)]
         
         for _ in range(max_iter):
@@ -295,7 +242,6 @@ class RouteGenerator:
                 distancias = [self._haversine(edificio.coordenadas, c) for c in centroides]
                 nuevos_grupos[distancias.index(min(distancias))].append(edificio)
             
-            # Recalcular centroides
             nuevos_centroides = []
             for i, grupo in enumerate(nuevos_grupos):
                 if grupo:
@@ -305,7 +251,6 @@ class RouteGenerator:
                 else:
                     nuevos_centroides.append(centroides[i])
             
-            # Verificar convergencia
             convergio = all(
                 self._haversine(v, n) < 0.01
                 for v, n in zip(centroides, nuevos_centroides)
@@ -319,16 +264,10 @@ class RouteGenerator:
         
         return [g for g in grupos if g]
     
-    # ----------------------------------------------------------------------
-    # UTILIDADES
-    # ----------------------------------------------------------------------
-    
     def _calcular_k(self, total: int) -> int:
-        """Número óptimo de clusters"""
         return max(2, min(math.ceil(total / self.MAX_PARADAS), 50))
     
     def _distribuir_sin_coords(self, rutas: List[Ruta], sin_coords: List[Edificio]):
-        """Distribuye edificios sin coordenadas equitativamente"""
         rutas_ord = sorted(rutas, key=lambda r: len(r.edificios))
         for i, edificio in enumerate(sin_coords):
             for ruta in rutas_ord:
@@ -337,7 +276,6 @@ class RouteGenerator:
                     break
     
     def _rutas_emergencia(self, edificios: List[Edificio], zona: str, inicio_id: int) -> List[Ruta]:
-        """Rutas de emergencia (sin coordenadas)"""
         rutas = []
         for i in range(0, len(edificios), self.MAX_PARADAS):
             grupo = edificios[i:i + self.MAX_PARADAS]
@@ -354,7 +292,6 @@ class RouteGenerator:
         return rutas
     
     def _fusionar_pequenas(self, rutas: List[Ruta]) -> List[Ruta]:
-        """Fusiona rutas con menos del mínimo de paradas"""
         por_zona: Dict[str, List[Ruta]] = {}
         for r in rutas:
             por_zona.setdefault(r.zona, []).append(r)
@@ -379,17 +316,12 @@ class RouteGenerator:
         return resultado
     
     def _optimizar_con_google(self, ruta: Ruta):
-        """
-        Optimiza orden con Google Directions API.
-        CORRECCIÓN: solo se llama si hay más de 3 edificios (ahorra $$)
-        """
         try:
             con_coords = [e for e in ruta.edificios if e.coordenadas]
             if len(con_coords) < 2:
                 return
             
-            waypoints = "|".join(f"{lat},{lng}" for lat, lng in
-                                 [e.coordenadas for e in con_coords])
+            waypoints = "|".join(f"{lat},{lng}" for lat, lng in [e.coordenadas for e in con_coords])
             
             response = requests.get(
                 "https://maps.googleapis.com/maps/api/directions/json",
@@ -416,15 +348,12 @@ class RouteGenerator:
                 ruta.distancia_km = sum(l['distance']['value'] for l in route['legs']) / 1000
                 ruta.tiempo_min = sum(l['duration']['value'] for l in route['legs']) / 60
                 ruta.polyline = route['overview_polyline']['points']
-                
-                # Generar URL de Google Maps
                 ruta.google_maps_url = self._generar_url_maps(ruta)
                 
         except Exception as e:
             logger.error(f"Error optimizando ruta {ruta.id}: {e}")
     
     def _generar_url_maps(self, ruta: Ruta) -> str:
-        """Genera URL de Google Maps (de tu código original)"""
         try:
             import urllib.parse
             direcciones = [e.direccion_original for e in ruta.edificios if e.direccion_original]
@@ -444,12 +373,7 @@ class RouteGenerator:
             logger.error(f"Error generando URL Maps: {e}")
             return ""
     
-    # ----------------------------------------------------------------------
-    # HELPER METHODS (de tu código original)
-    # ----------------------------------------------------------------------
-    
     def _extraer_persona(self, fila: pd.Series) -> Persona:
-        """Extrae persona de una fila (de tu código)"""
         nombre_completo = str(fila.get('nombre', '')).strip()
         return Persona(
             nombre_completo=nombre_completo,
@@ -462,7 +386,6 @@ class RouteGenerator:
         )
     
     def _limpiar_titulo(self, nombre: str) -> str:
-        """Limpia títulos académicos"""
         if not nombre or pd.isna(nombre):
             return "Sin nombre"
         
@@ -479,7 +402,6 @@ class RouteGenerator:
         return ' '.join(p.capitalize() for p in nombre_str.split())
     
     def _asignar_zona(self, alcaldia: str) -> str:
-        """Asigna zona según alcaldía"""
         if not alcaldia:
             return 'OTRAS'
         alcaldia_upper = alcaldia.upper()
@@ -490,7 +412,6 @@ class RouteGenerator:
     
     @staticmethod
     def _haversine(coord1: Tuple[float, float], coord2: Tuple[float, float]) -> float:
-        """Distancia Haversine en km"""
         try:
             lat1, lon1 = coord1
             lat2, lon2 = coord2
