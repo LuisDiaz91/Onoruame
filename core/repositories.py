@@ -109,13 +109,14 @@ class RutaRepo:
             )
 
     @staticmethod
-    def create(zona: str, origen_nombre: str, origen_coords: str) -> int:
+    def create(zona: str, origen_nombre: str, origen_coords: str,
+               ruta_hash: str = "") -> int:
         with db.get_cursor() as cur:
             cur.execute("""
-                INSERT INTO rutas (zona, origen_nombre, origen_coords)
-                VALUES (%s, %s, %s)
+                INSERT INTO rutas (zona, origen_nombre, origen_coords, ruta_hash)
+                VALUES (%s, %s, %s, %s)
                 RETURNING id
-            """, (zona, origen_nombre, origen_coords))
+            """, (zona, origen_nombre, origen_coords, ruta_hash))
             return cur.fetchone()["id"]
 
     @staticmethod
@@ -137,8 +138,28 @@ class RutaRepo:
 
     @staticmethod
     def crear_desde_generador(ruta) -> int:
-        """Persiste una Ruta (dataclass) completa en la BD."""
+        """
+        Persiste una Ruta (dataclass) completa en la BD.
+        Idempotente: si la ruta ya existe (mismo hash de contenido)
+        retorna el ID existente sin duplicar.
+        """
         import urllib.parse
+        import hashlib
+
+        # Hash del contenido para detectar duplicados
+        contenido = f"{ruta.zona}_{'_'.join(e.direccion_original for e in ruta.edificios)}"
+        ruta_hash = hashlib.md5(contenido.encode()).hexdigest()
+
+        # Verificar si ya existe (evita doble guardado GUI + Celery)
+        with db.get_cursor() as cur:
+            cur.execute(
+                "SELECT id FROM rutas WHERE ruta_hash = %s",
+                (ruta_hash,)
+            )
+            existente = cur.fetchone()
+            if existente:
+                logger.warning(f"Ruta ya existe con hash {ruta_hash[:8]}… → id={existente['id']}")
+                return existente['id']
 
         # URL Google Maps
         dirs = [e.direccion_original for e in ruta.edificios if e.direccion_original]
@@ -155,7 +176,7 @@ class RutaRepo:
                 google_maps_url = f"{base}&origin={origen}&destination={destino}&waypoints={wps}&travelmode=driving"
 
         from core.config import settings as s
-        ruta_id = RutaRepo.create(ruta.zona, s.ORIGEN_NOMBRE, s.ORIGEN_COORDS)
+        ruta_id = RutaRepo.create(ruta.zona, s.ORIGEN_NOMBRE, s.ORIGEN_COORDS, ruta_hash)
 
         total_personas = 0
         for orden, edificio in enumerate(ruta.edificios, 1):
