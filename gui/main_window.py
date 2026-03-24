@@ -1,11 +1,11 @@
 # gui/main_window.py
 """
-Ventana principal de Onoruame - VERSIÓN CORREGIDA
-Conecta directo a PostgreSQL via repositories.
+Ventana principal de Onoruame.
+Conecta directo a PostgreSQL via repositories (sin pasar por Flask API).
 
 Pestañas:
-  1. Importar   — carga Excel, lanza generación
-  2. Rutas      — tabla en tiempo real
+  1. Importar   — carga Excel, lanza generación en hilo separado
+  2. Rutas      — tabla en tiempo real con estado y acciones
   3. Repartidores — asignación de rutas
   4. Avances    — entregas registradas por el bot
 """
@@ -15,52 +15,49 @@ import sys
 import json
 import threading
 import webbrowser
+import subprocess
 import logging
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
 import pandas as pd
 
-# Core de Onoruame
-from core.config import settings
-from core.database import db
+# Core
+from core.config      import settings
+from core.database    import db
 from core.repositories import (
     RutaRepo, RepartidorRepo, AvanceRepo, PersonaRepo, GeocacheRepo
 )
 from core.route_generator import RouteGenerator
-from core.geocoder import Geocoder
-
-# Generador de mapas (tu archivo existente)
-from .file_generator import FileGenerator
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# CONFIGURACIÓN VISUAL
-# =============================================================================
+# ─────────────────────────────────────────────────────────────
+# Paleta y estilos
+# ─────────────────────────────────────────────────────────────
 
 COLORES = {
-    'bg':        '#1e1e2e',      # Fondo principal
-    'panel':     '#2a2a3e',      # Fondo de paneles
-    'accent':    '#7c6af7',      # Púrpura (botones principales)
-    'accent2':   '#4ecdc4',      # Turquesa (hover)
-    'success':   '#4caf50',      # Verde
-    'warning':   '#ff9800',      # Naranja
-    'danger':    '#f44336',      # Rojo
-    'text':      '#cdd6f4',      # Texto claro
-    'text_dim':  '#7f849c',      # Texto tenue
-    'border':    '#45475a',      # Bordes
+    'bg':        '#1e1e2e',
+    'panel':     '#2a2a3e',
+    'accent':    '#7c6af7',
+    'accent2':   '#4ecdc4',
+    'success':   '#4caf50',
+    'warning':   '#ff9800',
+    'danger':    '#f44336',
+    'text':      '#cdd6f4',
+    'text_dim':  '#7f849c',
+    'border':    '#45475a',
 }
 
 ESTADO_COLORES = {
-    'pendiente':    '#ff9800',   # Naranja
-    'asignada':     '#2196f3',   # Azul
-    'en_progreso':  '#9c27b0',   # Púrpura
-    'completada':   '#4caf50',   # Verde
-    'cancelada':    '#f44336',   # Rojo
+    'pendiente':    '#ff9800',
+    'asignada':     '#2196f3',
+    'en_progreso':  '#9c27b0',
+    'completada':   '#4caf50',
+    'cancelada':    '#f44336',
 }
 
 ESTADO_ICONOS = {
@@ -72,59 +69,47 @@ ESTADO_ICONOS = {
 }
 
 
-# =============================================================================
-# VENTANA PRINCIPAL
-# =============================================================================
+# ─────────────────────────────────────────────────────────────
+# Ventana principal
+# ─────────────────────────────────────────────────────────────
 
 class MainWindow:
     """Ventana principal con 4 pestañas."""
 
-    REFRESH_MS = 15_000  # Auto-refresh cada 15 segundos
+    REFRESH_MS = 15_000      # auto-refresh cada 15 s
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("🌵 Onoruame — Sistema de Rutas PJCDMX")
+        self.root.title("Onoruame — Sistema de Rutas")
         self.root.geometry("1280x800")
         self.root.minsize(1024, 640)
         self.root.configure(bg=COLORES['bg'])
 
-        # Estado de la aplicación
+        # Estado
         self.archivo_excel: Optional[str] = None
-        self.df: Optional[pd.DataFrame] = None
-        self.generando: bool = False
-        self._refresh_job: Optional[str] = None
-        self._rep_ids: Dict[str, str] = {}  # Mapeo nombre → id repartidor
+        self.df:            Optional[pd.DataFrame] = None
+        self.generando:     bool = False
+        self._refresh_job:  Optional[str] = None
 
-        # Aplicar estilos
         self._aplicar_estilos()
-        
-        # Construir UI
         self._construir_ui()
-        
-        # Verificar conexión a BD
         self._verificar_db()
-        
-        # Iniciar auto-refresh
         self._auto_refresh()
 
-    # -------------------------------------------------------------------------
-    # ESTILOS
-    # -------------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────
+    # Estilos ttk
+    # ──────────────────────────────────────────────────────────
 
     def _aplicar_estilos(self):
-        """Configura los estilos de ttk"""
         style = ttk.Style()
         style.theme_use('clam')
 
-        # Estilos base
         style.configure('.',
             background=COLORES['bg'],
             foreground=COLORES['text'],
             fieldbackground=COLORES['panel'],
             font=('Segoe UI', 10),
         )
-
-        # Notebook (pestañas)
         style.configure('TNotebook',
             background=COLORES['bg'],
             tabmargins=[2, 5, 2, 0],
@@ -139,12 +124,8 @@ class MainWindow:
             background=[('selected', COLORES['accent'])],
             foreground=[('selected', '#ffffff')],
         )
-
-        # Frames
-        style.configure('TFrame', background=COLORES['bg'])
-        style.configure('TLabel', background=COLORES['bg'], foreground=COLORES['text'])
-        
-        # Botones
+        style.configure('TFrame',   background=COLORES['bg'])
+        style.configure('TLabel',   background=COLORES['bg'], foreground=COLORES['text'])
         style.configure('TButton',
             background=COLORES['accent'],
             foreground='#ffffff',
@@ -154,11 +135,10 @@ class MainWindow:
         style.map('TButton',
             background=[('active', COLORES['accent2']), ('disabled', COLORES['border'])],
         )
-        style.configure('Danger.TButton', background=COLORES['danger'])
+        style.configure('Danger.TButton',  background=COLORES['danger'])
         style.configure('Success.TButton', background=COLORES['success'])
         style.configure('Warning.TButton', background=COLORES['warning'])
 
-        # Treeview (tablas)
         style.configure('Treeview',
             background=COLORES['panel'],
             foreground=COLORES['text'],
@@ -176,8 +156,6 @@ class MainWindow:
             background=[('selected', COLORES['accent'])],
             foreground=[('selected', '#ffffff')],
         )
-
-        # Entradas
         style.configure('TEntry',
             fieldbackground=COLORES['panel'],
             foreground=COLORES['text'],
@@ -187,14 +165,10 @@ class MainWindow:
             fieldbackground=COLORES['panel'],
             foreground=COLORES['text'],
         )
-
-        # Progressbar
         style.configure('TProgressbar',
             troughcolor=COLORES['panel'],
             background=COLORES['accent'],
         )
-
-        # LabelFrame
         style.configure('TLabelframe',
             background=COLORES['bg'],
             foreground=COLORES['text_dim'],
@@ -205,20 +179,18 @@ class MainWindow:
             font=('Segoe UI', 9),
         )
 
-    # -------------------------------------------------------------------------
-    # CONSTRUCCIÓN DE LA UI
-    # -------------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────
+    # UI principal
+    # ──────────────────────────────────────────────────────────
 
     def _construir_ui(self):
-        """Construye todos los elementos de la interfaz"""
-        
-        # ----- HEADER -----
+        # Header
         header = tk.Frame(self.root, bg=COLORES['accent'], height=48)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
 
         tk.Label(header,
-            text="🌵 ONORUAME — Sistema de Rutas PJCDMX",
+            text="⚡ ONORUAME",
             bg=COLORES['accent'], fg='#ffffff',
             font=('Segoe UI', 14, 'bold'),
         ).pack(side=tk.LEFT, padx=20, pady=10)
@@ -232,23 +204,22 @@ class MainWindow:
 
         self.lbl_hora = tk.Label(header,
             text="",
-            bg=COLORES['accent'], fg='#ffffff',
+            bg=COLORES['accent'], fg='#ffffffaa',
             font=('Segoe UI', 9),
         )
         self.lbl_hora.pack(side=tk.RIGHT, padx=10)
         self._tick_hora()
 
-        # ----- NOTEBOOK (PESTAÑAS) -----
+        # Notebook
         self.nb = ttk.Notebook(self.root)
         self.nb.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Crear las 4 pestañas
         self._tab_importar()
         self._tab_rutas()
         self._tab_repartidores()
         self._tab_avances()
 
-        # ----- BARRA DE ESTADO -----
+        # Barra de estado
         self.statusbar = tk.Label(self.root,
             text="Listo",
             bg=COLORES['panel'], fg=COLORES['text_dim'],
@@ -257,12 +228,11 @@ class MainWindow:
         )
         self.statusbar.pack(fill=tk.X, side=tk.BOTTOM)
 
-    # -------------------------------------------------------------------------
-    # PESTAÑA 1: IMPORTAR EXCEL
-    # -------------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────
+    # TAB 1: Importar Excel
+    # ──────────────────────────────────────────────────────────
 
     def _tab_importar(self):
-        """Pestaña de importación de Excel y generación de rutas"""
         frame = ttk.Frame(self.nb)
         self.nb.add(frame, text='  📥 Importar  ')
 
@@ -272,7 +242,7 @@ class MainWindow:
         left.pack_propagate(False)
         left.configure(width=320)
 
-        # Archivo Excel
+        # Archivo
         ttk.Label(left, text='Archivo Excel:').pack(anchor=tk.W)
         file_row = ttk.Frame(left)
         file_row.pack(fill=tk.X, pady=(4, 12))
@@ -286,38 +256,23 @@ class MainWindow:
         ttk.Button(file_row, text='📂', width=4,
                    command=self._seleccionar_excel).pack(side=tk.RIGHT)
 
-        # Origen (coordenadas)
+        # Origen
         ttk.Label(left, text='Coordenadas de origen:').pack(anchor=tk.W)
         self.entry_coords = ttk.Entry(left)
         self.entry_coords.insert(0, settings.ORIGEN_COORDS)
         self.entry_coords.pack(fill=tk.X, pady=(4, 12))
 
-        # Origen (nombre)
         ttk.Label(left, text='Nombre del origen:').pack(anchor=tk.W)
         self.entry_origen = ttk.Entry(left)
         self.entry_origen.insert(0, settings.ORIGEN_NOMBRE)
         self.entry_origen.pack(fill=tk.X, pady=(4, 12))
 
-        # Máx paradas por ruta
         ttk.Label(left, text='Máx. paradas por ruta:').pack(anchor=tk.W)
         self.spin_max = ttk.Spinbox(left, from_=3, to=15, width=6)
         self.spin_max.set(settings.MAX_EDIFICIOS_POR_RUTA)
         self.spin_max.pack(anchor=tk.W, pady=(4, 20))
 
-        # API Key (visible/oculta)
-        ttk.Label(left, text='Google API Key:').pack(anchor=tk.W)
-        api_frame = ttk.Frame(left)
-        api_frame.pack(fill=tk.X, pady=(4, 12))
-        
-        self.entry_api = ttk.Entry(api_frame, show='*')
-        self.entry_api.insert(0, settings.GOOGLE_MAPS_API_KEY)
-        self.entry_api.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        self.show_api = tk.BooleanVar(value=False)
-        ttk.Checkbutton(api_frame, text='👁', variable=self.show_api,
-                       command=self._toggle_api_visibility).pack(side=tk.RIGHT, padx=(4,0))
-
-        # Botón generar
+        # Botones acción
         self.btn_generar = ttk.Button(left,
             text='▶  GENERAR RUTAS',
             command=self._lanzar_generacion,
@@ -325,7 +280,6 @@ class MainWindow:
         )
         self.btn_generar.pack(fill=tk.X, pady=(0, 8))
 
-        # Botones auxiliares
         ttk.Button(left,
             text='🗄  Inicializar BD',
             command=self._init_db,
@@ -336,12 +290,11 @@ class MainWindow:
             command=self._ver_geocache,
         ).pack(fill=tk.X)
 
-        # Barra de progreso
+        # Progress
         self.progress = ttk.Progressbar(left, mode='indeterminate')
         self.progress.pack(fill=tk.X, pady=(20, 4))
-        
         self.lbl_progress = ttk.Label(left, text='', foreground=COLORES['text_dim'],
-                                      font=('Segoe UI', 9))
+                                       font=('Segoe UI', 9))
         self.lbl_progress.pack(anchor=tk.W)
 
         # Panel derecho: log
@@ -360,26 +313,18 @@ class MainWindow:
         )
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
-        # Tags de color para el log
+        # Tags de color en el log
         self.log_text.tag_config('ok',    foreground=COLORES['success'])
         self.log_text.tag_config('err',   foreground=COLORES['danger'])
         self.log_text.tag_config('warn',  foreground=COLORES['warning'])
         self.log_text.tag_config('info',  foreground=COLORES['accent2'])
         self.log_text.tag_config('dim',   foreground=COLORES['text_dim'])
 
-    def _toggle_api_visibility(self):
-        """Muestra/oculta la API key"""
-        if self.show_api.get():
-            self.entry_api.config(show='')
-        else:
-            self.entry_api.config(show='*')
-
-    # -------------------------------------------------------------------------
-    # PESTAÑA 2: RUTAS
-    # -------------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────
+    # TAB 2: Rutas
+    # ──────────────────────────────────────────────────────────
 
     def _tab_rutas(self):
-        """Pestaña de visualización y gestión de rutas"""
         frame = ttk.Frame(self.nb)
         self.nb.add(frame, text='  🗺 Rutas  ')
 
@@ -403,35 +348,31 @@ class MainWindow:
                                           foreground=COLORES['text_dim'])
         self.lbl_total_rutas.pack(side=tk.RIGHT, padx=8)
 
-        # Tabla de rutas
+        # Tabla rutas
         cols = ('id', 'zona', 'estado', 'paradas', 'personas',
                 'dist_km', 'tiempo', 'repartidor', 'creado')
         self.tree_rutas = ttk.Treeview(frame, columns=cols, show='headings', height=14)
 
-        anchors = {
-            'id': 50, 'zona': 90, 'estado': 110, 'paradas': 70,
-            'personas': 80, 'dist_km': 80, 'tiempo': 80,
-            'repartidor': 160, 'creado': 140
-        }
-        cabeceras = {
-            'id': 'ID', 'zona': 'Zona', 'estado': 'Estado',
-            'paradas': 'Paradas', 'personas': 'Personas',
-            'dist_km': 'Distancia', 'tiempo': 'Tiempo',
-            'repartidor': 'Repartidor', 'creado': 'Creado'
-        }
+        anchors = {'id': 50, 'zona': 90, 'estado': 110, 'paradas': 70,
+                   'personas': 80, 'dist_km': 80, 'tiempo': 80,
+                   'repartidor': 160, 'creado': 140}
+        cabeceras = {'id': 'ID', 'zona': 'Zona', 'estado': 'Estado',
+                     'paradas': 'Paradas', 'personas': 'Personas',
+                     'dist_km': 'Distancia', 'tiempo': 'Tiempo',
+                     'repartidor': 'Repartidor', 'creado': 'Creado'}
 
         for col in cols:
             self.tree_rutas.heading(col, text=cabeceras[col],
                                     command=lambda c=col: self._ordenar_rutas(c))
             self.tree_rutas.column(col, width=anchors[col], anchor=tk.CENTER)
 
-        scroll_rutas = ttk.Scrollbar(frame, orient=tk.VERTICAL,
-                                      command=self.tree_rutas.yview)
-        self.tree_rutas.configure(yscrollcommand=scroll_rutas.set)
+        sb_rutas = ttk.Scrollbar(frame, orient=tk.VERTICAL,
+                                  command=self.tree_rutas.yview)
+        self.tree_rutas.configure(yscrollcommand=sb_rutas.set)
         self.tree_rutas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll_rutas.pack(side=tk.LEFT, fill=tk.Y)
+        sb_rutas.pack(side=tk.LEFT, fill=tk.Y)
 
-        # Panel derecho: acciones
+        # Panel derecho: acciones de ruta
         acciones = ttk.LabelFrame(frame, text='Acciones', padding=12)
         acciones.pack(side=tk.LEFT, fill=tk.Y, padx=(8, 0))
         acciones.pack_propagate(False)
@@ -457,47 +398,44 @@ class MainWindow:
                    style='Success.TButton',
                    command=self._cambiar_estado_ruta).pack(fill=tk.X)
 
-    # -------------------------------------------------------------------------
-    # PESTAÑA 3: REPARTIDORES
-    # -------------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────
+    # TAB 3: Repartidores
+    # ──────────────────────────────────────────────────────────
 
     def _tab_repartidores(self):
-        """Pestaña de gestión de repartidores"""
         frame = ttk.Frame(self.nb)
         self.nb.add(frame, text='  👤 Repartidores  ')
 
         left = ttk.Frame(frame)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Tabla de repartidores
+        # Tabla repartidores
         top = ttk.Frame(left)
         top.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(top, text='Repartidores registrados:').pack(side=tk.LEFT)
+        ttk.Label(top, text='Repartidores activos:').pack(side=tk.LEFT)
         ttk.Button(top, text='🔄', width=3,
                    command=self.cargar_repartidores).pack(side=tk.LEFT, padx=6)
 
-        cols_rep = ('id', 'nombre', 'telefono', 'activo', 'rutas_asignadas')
+        cols_rep = ('id', 'nombre', 'telefono', 'rutas_asignadas')
         self.tree_reps = ttk.Treeview(left, columns=cols_rep,
                                        show='headings', height=10)
-        
-        col_widths = [60, 200, 120, 60, 120]
-        col_texts = ['ID', 'Nombre', 'Teléfono', 'Activo', 'Rutas']
-        
-        for col, w, txt in zip(cols_rep, col_widths, col_texts):
+        for col, w, txt in [('id', 60, 'ID'), ('nombre', 200, 'Nombre'),
+                              ('telefono', 120, 'Teléfono'),
+                              ('rutas_asignadas', 120, 'Rutas asignadas')]:
             self.tree_reps.heading(col, text=txt)
             self.tree_reps.column(col, width=w, anchor=tk.CENTER)
 
-        scroll_reps = ttk.Scrollbar(left, orient=tk.VERTICAL,
-                                     command=self.tree_reps.yview)
-        self.tree_reps.configure(yscrollcommand=scroll_reps.set)
+        sb_r = ttk.Scrollbar(left, orient=tk.VERTICAL,
+                              command=self.tree_reps.yview)
+        self.tree_reps.configure(yscrollcommand=sb_r.set)
         self.tree_reps.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll_reps.pack(side=tk.LEFT, fill=tk.Y)
+        sb_r.pack(side=tk.LEFT, fill=tk.Y)
 
-        # Panel derecho: acciones
+        # Panel derecho
         right = ttk.Frame(frame)
         right.pack(side=tk.LEFT, fill=tk.Y, padx=(12, 0))
 
-        # Formulario de alta
+        # Alta de repartidor
         form = ttk.LabelFrame(right, text='Nuevo repartidor', padding=12)
         form.pack(fill=tk.X, pady=(0, 12))
 
@@ -509,15 +447,11 @@ class MainWindow:
         self.entry_rep_tel = ttk.Entry(form, width=24)
         self.entry_rep_tel.pack(fill=tk.X, pady=(2, 8))
 
-        ttk.Label(form, text='Telegram ID:').pack(anchor=tk.W)
-        self.entry_rep_telegram = ttk.Entry(form, width=24)
-        self.entry_rep_telegram.pack(fill=tk.X, pady=(2, 8))
-
-        ttk.Button(form, text='➕ Agregar repartidor',
+        ttk.Button(form, text='➕ Agregar',
                    style='Success.TButton',
                    command=self._agregar_repartidor).pack(fill=tk.X)
 
-        # Asignación de ruta
+        # Asignar ruta
         asignar = ttk.LabelFrame(right, text='Asignar ruta', padding=12)
         asignar.pack(fill=tk.X)
 
@@ -532,16 +466,14 @@ class MainWindow:
         ttk.Button(asignar, text='📋 Asignar ruta',
                    command=self._asignar_ruta).pack(fill=tk.X)
 
-    # -------------------------------------------------------------------------
-    # PESTAÑA 4: AVANCES
-    # -------------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────
+    # TAB 4: Avances
+    # ──────────────────────────────────────────────────────────
 
     def _tab_avances(self):
-        """Pestaña de seguimiento de entregas"""
         frame = ttk.Frame(self.nb)
         self.nb.add(frame, text='  📦 Avances  ')
 
-        # Barra superior
         top = ttk.Frame(frame)
         top.pack(fill=tk.X, pady=(0, 8))
 
@@ -557,7 +489,7 @@ class MainWindow:
         ttk.Button(top, text='🔄 Actualizar',
                    command=self.cargar_avances).pack(side=tk.LEFT, padx=6)
 
-        ttk.Button(top, text='✅ Marcar procesados',
+        ttk.Button(top, text='✅ Marcar procesados seleccionados',
                    style='Success.TButton',
                    command=self._marcar_procesados).pack(side=tk.RIGHT)
 
@@ -565,45 +497,47 @@ class MainWindow:
                                             foreground=COLORES['text_dim'])
         self.lbl_total_avances.pack(side=tk.RIGHT, padx=12)
 
-        # Tabla de avances
+        # Tabla avances
         cols_av = ('id', 'ruta', 'persona', 'repartidor', 'tipo', 'estado', 'foto', 'timestamp')
         self.tree_avances = ttk.Treeview(frame, columns=cols_av,
                                           show='headings', height=18)
 
-        col_widths = [80, 60, 200, 150, 90, 90, 80, 140]
-        col_texts = ['ID', 'Ruta', 'Persona', 'Repartidor', 'Tipo', 'Estado', 'Foto', 'Registrado']
-        
-        for col, w, txt in zip(cols_av, col_widths, col_texts):
+        for col, w, txt in [
+            ('id',          80,  'ID'),
+            ('ruta',        60,  'Ruta'),
+            ('persona',     200, 'Persona'),
+            ('repartidor',  150, 'Repartidor'),
+            ('tipo',        90,  'Tipo'),
+            ('estado',      90,  'Estado'),
+            ('foto',        80,  'Foto'),
+            ('timestamp',   140, 'Registrado'),
+        ]:
             self.tree_avances.heading(col, text=txt)
             self.tree_avances.column(col, width=w, anchor=tk.CENTER)
 
-        scroll_av = ttk.Scrollbar(frame, orient=tk.VERTICAL,
-                                   command=self.tree_avances.yview)
-        self.tree_avances.configure(yscrollcommand=scroll_av.set)
+        sb_av = ttk.Scrollbar(frame, orient=tk.VERTICAL,
+                               command=self.tree_avances.yview)
+        self.tree_avances.configure(yscrollcommand=sb_av.set)
         self.tree_avances.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll_av.pack(side=tk.LEFT, fill=tk.Y)
+        sb_av.pack(side=tk.LEFT, fill=tk.Y)
 
-    # =========================================================================
-    # LÓGICA: IMPORTAR / GENERAR
-    # =========================================================================
+    # ──────────────────────────────────────────────────────────
+    # Lógica: Importar / Generar
+    # ──────────────────────────────────────────────────────────
 
     def _seleccionar_excel(self):
-        """Abre diálogo para seleccionar archivo Excel"""
         path = filedialog.askopenfilename(
             title='Seleccionar Excel',
             filetypes=[('Excel', '*.xlsx *.xls')],
         )
         if not path:
             return
-            
         try:
             self.log(f'Cargando {os.path.basename(path)}…', 'info')
             from core.excel_processor import ExcelProcessor
-            
-            proc = ExcelProcessor(path)
+            proc    = ExcelProcessor(path)
             self.df = proc.procesar()
             self.archivo_excel = path
-            
             self.lbl_archivo.config(
                 text=os.path.basename(path),
                 foreground=COLORES['success'],
@@ -612,72 +546,51 @@ class MainWindow:
             self.log(f'✅ {len(self.df)} registros cargados', 'ok')
 
             # Vista previa
-            for i, row in self.df.head(4).iterrows():
-                nombre = str(row.get('nombre', ''))[:28]
-                direccion = str(row.get('direccion', ''))[:40]
-                self.log(f"   {i+1}. {nombre}… → {direccion}…", 'dim')
-                
+            for _, row in self.df.head(4).iterrows():
+                self.log(
+                    f"   {str(row.get('nombre',''))[:28]} → "
+                    f"{str(row.get('direccion',''))[:40]}", 'dim'
+                )
         except Exception as e:
             self.log(f'❌ Error cargando Excel: {e}', 'err')
             messagebox.showerror('Error', str(e))
 
     def _lanzar_generacion(self):
-        """Lanza el hilo de generación de rutas"""
         if self.generando or self.df is None:
-            return
-
-        # Validar API key
-        api_key = self.entry_api.get().strip()
-        if not api_key:
-            messagebox.showwarning('API Key', 'Ingresa la API Key de Google Maps')
             return
 
         self.generando = True
         self.btn_generar.config(state='disabled')
         self.progress.start(12)
-        self._set_progress('Iniciando geocodificación…')
+        self._set_progress('Geocodificando direcciones…')
 
         hilo = threading.Thread(target=self._generar_rutas, daemon=True)
         hilo.start()
 
     def _generar_rutas(self):
-        """
-        Ejecuta la generación de rutas en un hilo secundario.
-        CORREGIDO: Ahora pasa api_key correctamente.
-        """
+        """Corre en hilo secundario — NO tocar widgets directamente."""
         try:
             self.log('🚀 Iniciando generación de rutas…', 'info')
 
-            # Obtener valores de la UI
-            api_key = self.entry_api.get().strip()
-            origen_coords = self.entry_coords.get().strip()
-            origen_nombre = self.entry_origen.get().strip()
-            max_paradas = int(self.spin_max.get())
+            # Sincronizar settings desde UI antes de instanciar el generador
+            settings.MAX_EDIFICIOS_POR_RUTA = int(self.spin_max.get())
+            settings.GOOGLE_MAPS_API_KEY    = self.entry_api.get().strip()
+            settings.ORIGEN_COORDS          = self.entry_coords.get().strip()
+            settings.ORIGEN_NOMBRE          = self.entry_origen.get().strip()
 
-            # Actualizar configuración
-            settings.MAX_EDIFICIOS_POR_RUTA = max_paradas
-
-            # Crear generador con API key (¡CORREGIDO!)
-            generator = RouteGenerator(
-                api_key=api_key,
-                origen_coords=origen_coords,
-                origen_nombre=origen_nombre
-            )
+            generator = RouteGenerator()
 
             self._set_progress('Agrupando edificios…')
             edificios_por_zona = generator.agrupar_edificios(self.df)
 
-            total_edificios = sum(len(v) for v in edificios_por_zona.values())
-            self.log(f'   Edificios únicos: {total_edificios}', 'dim')
-            self._set_progress(f'Creando rutas ({total_edificios} edificios)…')
+            total_ed = sum(len(v) for v in edificios_por_zona.values())
+            self.log(f'   Edificios únicos: {total_ed}', 'dim')
+            self._set_progress(f'Creando rutas ({total_ed} edificios)…')
 
             rutas = generator.crear_rutas(edificios_por_zona)
             self._set_progress('Guardando en PostgreSQL…')
-            
-            # Guardar en BD usando repositories
-            from core.repositories import RutaRepo
-            for ruta in rutas:
-                RutaRepo.crear_desde_generador(ruta)
+
+            generator.persistir_en_db(rutas)
 
             # Generar mapas
             self._set_progress('Generando mapas…')
@@ -685,22 +598,16 @@ class MainWindow:
 
             try:
                 fg = FileGenerator()
-                for ruta in rutas:
-                    fg.generar_mapa(ruta)
-                self.log('🗺️ Mapas generados', 'ok')
+                fg.generar_todos(rutas)
             except Exception as e:
                 self.log(f'⚠️ Error generando mapas: {e}', 'warn')
 
-            # Estadísticas finales
-            total_paradas = sum(r.total_edificios for r in rutas)
-            total_personas = sum(r.total_personas for r in rutas)
-            
+            total_p = sum(r.total_paradas  for r in rutas)
+            total_pe = sum(r.total_personas for r in rutas)
             self.log(
-                f'🎉 {len(rutas)} rutas | {total_paradas} paradas | {total_personas} personas',
+                f'🎉 {len(rutas)} rutas | {total_p} paradas | {total_pe} personas',
                 'ok',
             )
-            
-            # Refrescar tabla de rutas
             self.root.after(0, self.cargar_rutas)
 
         except Exception as e:
@@ -712,43 +619,34 @@ class MainWindow:
             self.root.after(0, self._fin_generacion)
 
     def _fin_generacion(self):
-        """Finaliza el proceso de generación"""
         self.generando = False
         self.btn_generar.config(state='normal')
         self.progress.stop()
         self._set_progress('Listo')
 
-    # =========================================================================
-    # LÓGICA: RUTAS
-    # =========================================================================
+    # ──────────────────────────────────────────────────────────
+    # Lógica: Rutas
+    # ──────────────────────────────────────────────────────────
 
     def cargar_rutas(self):
-        """Carga las rutas desde la BD y las muestra en la tabla"""
         estado = self.combo_estado_filtro.get()
         try:
-            if estado == 'todos':
-                rutas = RutaRepo.list_all()
-            else:
-                rutas = RutaRepo.list_by_estado(estado)
+            rutas = RutaRepo.list_all(None if estado == 'todos' else estado)
         except Exception as e:
             self.log(f'❌ Error cargando rutas: {e}', 'err')
             return
 
-        # Limpiar tabla
-        for item in self.tree_rutas.get_children():
-            self.tree_rutas.delete(item)
+        self.tree_rutas.delete(*self.tree_rutas.get_children())
 
-        # Insertar rutas
         for r in rutas:
-            estado_r = r.get('estado', 'pendiente')
-            icono = ESTADO_ICONOS.get(estado_r, '⚪')
-            repartidor = r.get('repartidor_nombre') or '—'
-            
-            creado = ''
+            estado_r   = r.get('estado', 'pendiente')
+            icono      = ESTADO_ICONOS.get(estado_r, '⚪')
+            repartidor = r.get('repartidor') or '—'
+            creado     = ''
             if r.get('creado_en'):
                 try:
                     creado = r['creado_en'].strftime('%d/%m %H:%M')
-                except:
+                except Exception:
                     creado = str(r['creado_en'])[:16]
 
             self.tree_rutas.insert('', tk.END,
@@ -767,7 +665,7 @@ class MainWindow:
                 tags=(estado_r,),
             )
 
-        # Aplicar colores por estado
+        # Colorear filas por estado
         for est, color in ESTADO_COLORES.items():
             self.tree_rutas.tag_configure(est, foreground=color)
 
@@ -775,7 +673,6 @@ class MainWindow:
         self._status(f'Rutas cargadas: {len(rutas)}')
 
     def _ruta_seleccionada_id(self) -> Optional[int]:
-        """Obtiene el ID de la ruta seleccionada"""
         sel = self.tree_rutas.selection()
         if not sel:
             messagebox.showwarning('Atención', 'Selecciona una ruta primero')
@@ -783,26 +680,27 @@ class MainWindow:
         return int(sel[0])
 
     def _abrir_mapa_seleccionada(self):
-        """Abre el mapa HTML de la ruta seleccionada"""
         ruta_id = self._ruta_seleccionada_id()
         if ruta_id is None:
             return
-            
         # Buscar archivo HTML generado
-        if os.path.exists('mapas_pro'):
-            for archivo in os.listdir('mapas_pro'):
-                if archivo.startswith(f'Ruta_{ruta_id}_'):
-                    webbrowser.open(f'file://{os.path.abspath(os.path.join("mapas_pro", archivo))}')
-                    return
-                    
-        messagebox.showinfo('Info', f'No se encontró mapa para ruta {ruta_id}')
+        for zona in ['CENTRO', 'SUR', 'ORIENTE', 'NORTE', 'PONIENTE', 'OTRAS']:
+            path = f'mapas_pro/Ruta_{ruta_id}_{zona}.html'
+            if os.path.exists(path):
+                webbrowser.open(f'file://{os.path.abspath(path)}')
+                return
+        # Intentar sin zona
+        candidatos = [f for f in os.listdir('mapas_pro')
+                      if f.startswith(f'Ruta_{ruta_id}_')] if os.path.exists('mapas_pro') else []
+        if candidatos:
+            webbrowser.open(f'file://{os.path.abspath(os.path.join("mapas_pro", candidatos[0]))}')
+        else:
+            messagebox.showinfo('Info', f'No se encontró mapa para ruta {ruta_id}')
 
     def _abrir_gmaps_seleccionada(self):
-        """Abre la URL de Google Maps de la ruta seleccionada"""
         ruta_id = self._ruta_seleccionada_id()
         if ruta_id is None:
             return
-            
         ruta = RutaRepo.get(ruta_id)
         if ruta and ruta.get('google_maps_url'):
             webbrowser.open(ruta['google_maps_url'])
@@ -810,11 +708,9 @@ class MainWindow:
             messagebox.showinfo('Info', 'URL de Google Maps no disponible')
 
     def _ver_detalle_ruta(self):
-        """Muestra ventana con detalle de la ruta seleccionada"""
         ruta_id = self._ruta_seleccionada_id()
         if ruta_id is None:
             return
-            
         ruta = RutaRepo.get_full(ruta_id)
         if not ruta:
             return
@@ -830,40 +726,33 @@ class MainWindow:
         )
         txt.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        txt.insert(tk.END, f"RUTA {ruta_id} — {ruta.get('zona')}\n")
-        txt.insert(tk.END, f"{'='*50}\n")
+        txt.insert(tk.END, f"Ruta {ruta_id} — {ruta.get('zona')}\n")
         txt.insert(tk.END, f"Estado: {ruta.get('estado')}\n")
-        txt.insert(tk.END, f"Distancia: {ruta.get('distancia_km', 0):.1f} km\n")
-        txt.insert(tk.END, f"Tiempo: {ruta.get('tiempo_min', 0)} min\n")
-        txt.insert(tk.END, f"{'='*50}\n\n")
+        txt.insert(tk.END, f"Distancia: {ruta.get('distancia_km', 0):.1f} km  |  "
+                           f"Tiempo: {ruta.get('tiempo_min', 0)} min\n\n")
 
         for i, parada in enumerate(ruta.get('paradas', []), 1):
-            txt.insert(tk.END, f"📍 PARADA {i}\n")
-            txt.insert(tk.END, f"   Dirección: {parada.get('direccion_original', '')[:80]}\n")
-            
+            txt.insert(tk.END,
+                f"  Parada {i}: {parada.get('direccion_original', '')[:80]}\n")
             personas = parada.get('personas', [])
             if isinstance(personas, str):
-                import json
-                personas = json.loads(personas)
-                
+                import json as _json
+                personas = _json.loads(personas)
             for p in personas:
-                estado_p = '✅' if p.get('estado') == 'entregado' else '⏳'
-                txt.insert(tk.END, f"   {estado_p} {p.get('nombre', '')}\n")
+                est = '✅' if p.get('estado') == 'entregado' else '⏳'
+                txt.insert(tk.END, f"    {est} {p.get('nombre', '')}\n")
             txt.insert(tk.END, '\n')
 
         txt.config(state='disabled')
 
     def _cambiar_estado_ruta(self):
-        """Cambia el estado de la ruta seleccionada"""
         ruta_id = self._ruta_seleccionada_id()
         if ruta_id is None:
             return
-            
         nuevo = self.combo_nuevo_estado.get()
         if not nuevo:
             messagebox.showwarning('Atención', 'Selecciona un estado')
             return
-            
         try:
             RutaRepo.cambiar_estado(ruta_id, nuevo)
             self.cargar_rutas()
@@ -872,138 +761,122 @@ class MainWindow:
             messagebox.showerror('Error', str(e))
 
     def _ordenar_rutas(self, col: str):
-        """Ordena la tabla de rutas por columna"""
+        """Ordenar tabla por columna al hacer clic en encabezado."""
         items = [(self.tree_rutas.set(k, col), k)
                  for k in self.tree_rutas.get_children('')]
         items.sort()
         for i, (_, k) in enumerate(items):
             self.tree_rutas.move(k, '', i)
 
-    # =========================================================================
-    # LÓGICA: REPARTIDORES
-    # =========================================================================
+    # ──────────────────────────────────────────────────────────
+    # Lógica: Repartidores
+    # ──────────────────────────────────────────────────────────
 
     def cargar_repartidores(self):
-        """Carga la lista de repartidores desde la BD"""
         try:
-            reps = RepartidorRepo.list_all()
+            reps = RepartidorRepo.list_activos()
         except Exception as e:
             self.log(f'❌ Error cargando repartidores: {e}', 'err')
             return
 
-        # Limpiar tabla
-        for item in self.tree_reps.get_children():
-            self.tree_reps.delete(item)
+        self.tree_reps.delete(*self.tree_reps.get_children())
 
-        # Mapeo de nombres a IDs
-        self._rep_ids = {}
         nombres = []
-
         for r in reps:
-            activo = '✅' if r.get('activo', True) else '❌'
-            
             self.tree_reps.insert('', tk.END, iid=str(r['id']), values=(
                 str(r['id'])[:8] + '…',
                 r['nombre'],
                 r.get('telefono') or '—',
-                activo,
-                r.get('rutas_activas', 0),
+                '—',          # rutas asignadas (podría consultarse)
             ))
-            
-            self._rep_ids[r['nombre']] = str(r['id'])
             nombres.append(r['nombre'])
 
-        # Actualizar combobox
+        # Actualizar combo en tab Repartidores
         self.combo_rep_asignar['values'] = nombres
+        self._rep_ids = {r['nombre']: str(r['id']) for r in reps}
 
     def _agregar_repartidor(self):
-        """Agrega un nuevo repartidor a la BD"""
         nombre = self.entry_rep_nombre.get().strip()
-        telefono = self.entry_rep_tel.get().strip()
-        telegram_id = self.entry_rep_telegram.get().strip()
-
+        tel    = self.entry_rep_tel.get().strip()
         if not nombre:
             messagebox.showwarning('Atención', 'El nombre es obligatorio')
             return
-
         try:
-            RepartidorRepo.create(
-                nombre=nombre,
-                telefono=telefono or None,
-                telegram_id=telegram_id or None
-            )
-            
-            # Limpiar campos
+            RepartidorRepo.create(nombre, tel)
             self.entry_rep_nombre.delete(0, tk.END)
             self.entry_rep_tel.delete(0, tk.END)
-            self.entry_rep_telegram.delete(0, tk.END)
-            
-            # Recargar lista
             self.cargar_repartidores()
             self._status(f'Repartidor "{nombre}" creado')
-            
         except Exception as e:
             messagebox.showerror('Error', str(e))
 
     def _asignar_ruta(self):
-        """Asigna una ruta a un repartidor"""
-        ruta_id_str = self.entry_ruta_asignar.get().strip()
-        nombre_rep = self.combo_rep_asignar.get()
+        ruta_id_str  = self.entry_ruta_asignar.get().strip()
+        nombre_rep   = self.combo_rep_asignar.get()
 
         if not ruta_id_str or not nombre_rep:
-            messagebox.showwarning('Atención', 'Completa ID de ruta y repartidor')
+            messagebox.showwarning('Atención', 'Completa ruta ID y repartidor')
             return
-
         try:
-            ruta_id = int(ruta_id_str)
-            rep_id = self._rep_ids.get(nombre_rep)
-            
+            ruta_id   = int(ruta_id_str)
+            rep_id    = getattr(self, '_rep_ids', {}).get(nombre_rep)
             if not rep_id:
                 messagebox.showerror('Error', 'Repartidor no encontrado')
                 return
-                
             RutaRepo.asignar(ruta_id, rep_id)
-            
             self.entry_ruta_asignar.delete(0, tk.END)
             self.cargar_rutas()
             self._status(f'Ruta {ruta_id} asignada a {nombre_rep}')
-            
         except ValueError:
             messagebox.showerror('Error', 'ID de ruta debe ser un número')
         except Exception as e:
             messagebox.showerror('Error', str(e))
 
-    # =========================================================================
-    # LÓGICA: AVANCES
-    # =========================================================================
+    # ──────────────────────────────────────────────────────────
+    # Lógica: Avances
+    # ──────────────────────────────────────────────────────────
 
     def cargar_avances(self):
-        """Carga los avances/entregas desde la BD"""
         filtro = self.combo_avances_filtro.get()
-        
         try:
             if filtro == 'pendientes':
                 avances = AvanceRepo.pendientes()
             elif filtro == 'todos':
-                avances = AvanceRepo.list_all(limit=200)
-            else:  # procesados
-                avances = AvanceRepo.procesados(limit=200)
+                # todos = pendientes + procesados via query directa
+                with db.get_cursor() as cur:
+                    cur.execute("""
+                        SELECT a.*, pe.nombre, rep.nombre AS repartidor_nombre
+                        FROM avances a
+                        LEFT JOIN personas pe      ON pe.id = a.persona_id
+                        LEFT JOIN repartidores rep ON rep.id = a.repartidor_id
+                        ORDER BY a.creado_en DESC
+                        LIMIT 200
+                    """)
+                    avances = [dict(r) for r in cur.fetchall()]
+            else:
+                with db.get_cursor() as cur:
+                    cur.execute("""
+                        SELECT a.*, pe.nombre, rep.nombre AS repartidor_nombre
+                        FROM avances a
+                        LEFT JOIN personas pe      ON pe.id = a.persona_id
+                        LEFT JOIN repartidores rep ON rep.id = a.repartidor_id
+                        WHERE a.estado = 'procesado'
+                        ORDER BY a.creado_en DESC LIMIT 200
+                    """)
+                    avances = [dict(r) for r in cur.fetchall()]
         except Exception as e:
             self.log(f'❌ Error cargando avances: {e}', 'err')
             return
 
-        # Limpiar tabla
-        for item in self.tree_avances.get_children():
-            self.tree_avances.delete(item)
+        self.tree_avances.delete(*self.tree_avances.get_children())
 
         for av in avances:
             tiene_foto = '📷' if av.get('foto_path') else '—'
-            
             ts = ''
             if av.get('creado_en'):
                 try:
                     ts = av['creado_en'].strftime('%d/%m %H:%M')
-                except:
+                except Exception:
                     ts = str(av['creado_en'])[:16]
 
             self.tree_avances.insert('', tk.END,
@@ -1011,7 +884,7 @@ class MainWindow:
                 values=(
                     str(av['id'])[:8] + '…',
                     av.get('ruta_id', ''),
-                    av.get('persona_nombre') or '—',
+                    av.get('nombre') or '—',
                     av.get('repartidor_nombre') or '—',
                     av.get('tipo', 'entrega'),
                     av.get('estado', ''),
@@ -1023,88 +896,76 @@ class MainWindow:
         self.lbl_total_avances.config(text=f'{len(avances)} registros')
 
     def _marcar_procesados(self):
-        """Marca los avances seleccionados como procesados"""
         sel = self.tree_avances.selection()
         if not sel:
             messagebox.showwarning('Atención', 'Selecciona avances primero')
             return
-            
         for iid in sel:
             try:
-                AvanceRepo.marcar_procesado(int(iid))
+                AvanceRepo.marcar_procesado(iid)
             except Exception as e:
                 self.log(f'❌ Error marcando {iid}: {e}', 'err')
-                
         self.cargar_avances()
         self._status(f'{len(sel)} avances marcados como procesados')
 
-    # =========================================================================
-    # UTILIDADES
-    # =========================================================================
+    # ──────────────────────────────────────────────────────────
+    # Utilidades
+    # ──────────────────────────────────────────────────────────
 
     def _verificar_db(self):
-        """Verifica la conexión a la base de datos"""
-        try:
-            db.health_check()
-            self.lbl_db.config(text='● DB conectada', fg=COLORES['success'])
-            
-            # Cargar datos iniciales
+        ok = db.health_check()
+        color = COLORES['success'] if ok else COLORES['danger']
+        texto = '● DB conectada' if ok else '● DB sin conexión'
+        self.lbl_db.config(text=texto, fg=color)
+        if ok:
             self.cargar_rutas()
             self.cargar_repartidores()
             self.cargar_avances()
-            
-        except Exception as e:
-            self.lbl_db.config(text='● DB sin conexión', fg=COLORES['danger'])
-            self.log(f'❌ Sin conexión a PostgreSQL: {e}', 'err')
+        else:
+            self.log('❌ Sin conexión a PostgreSQL — verifica .env', 'err')
 
     def _init_db(self):
-        """Inicializa el esquema de la base de datos"""
         try:
             db.init_schema()
-            self.log('✅ Esquema de BD inicializado', 'ok')
+            self.log('✅ Schema aplicado', 'ok')
             self._verificar_db()
         except Exception as e:
             messagebox.showerror('Error', str(e))
 
     def _ver_geocache(self):
-        """Muestra estadísticas del caché de geocodificación"""
         try:
             stats = GeocacheRepo.stats()
-            messagebox.showinfo('Geocoding Cache',
-                f"✅ Exitosos: {stats.get('exitosos', 0)}\n"
-                f"❌ Fallidos: {stats.get('fallidos', 0)}\n"
-                f"📊 Total: {stats.get('total', 0)}"
+            messagebox.showinfo('Geocaching cache',
+                f"Exitosos: {stats.get('exitosos', 0)}\n"
+                f"Fallidos: {stats.get('fallidos', 0)}\n"
+                f"Total:    {stats.get('total', 0)}"
             )
         except Exception as e:
             messagebox.showerror('Error', str(e))
 
     def _auto_refresh(self):
-        """Refresca automáticamente las tablas cada cierto tiempo"""
+        """Refresca rutas y avances cada REFRESH_MS milisegundos."""
         try:
             if db.health_check():
                 self.cargar_rutas()
                 self.cargar_avances()
-        except:
+        except Exception:
             pass
-            
         self._refresh_job = self.root.after(self.REFRESH_MS, self._auto_refresh)
 
     def _set_progress(self, msg: str):
-        """Actualiza el mensaje de progreso (thread-safe)"""
         self.root.after(0, lambda: self.lbl_progress.config(text=msg))
 
     def _status(self, msg: str):
-        """Actualiza la barra de estado"""
         ts = datetime.now().strftime('%H:%M:%S')
         self.statusbar.config(text=f'[{ts}]  {msg}')
 
     def _tick_hora(self):
-        """Actualiza el reloj en el header"""
         self.lbl_hora.config(text=datetime.now().strftime('%H:%M:%S'))
         self.root.after(1000, self._tick_hora)
 
     def log(self, msg: str, tag: str = ''):
-        """Agrega una línea al log (thread-safe)"""
+        """Agrega línea al log de la pestaña Importar."""
         ts = datetime.now().strftime('%H:%M:%S')
 
         def _insert():
@@ -1118,19 +979,17 @@ class MainWindow:
             self.root.after(0, _insert)
 
 
-# =============================================================================
-# ENTRY POINT
-# =============================================================================
+# ─────────────────────────────────────────────────────────────
+# Entry point
+# ─────────────────────────────────────────────────────────────
 
 def main():
-    """Punto de entrada principal"""
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s  %(levelname)-8s  %(name)s  %(message)s',
     )
-    
     root = tk.Tk()
-    app = MainWindow(root)
+    app  = MainWindow(root)
     root.mainloop()
 
 
