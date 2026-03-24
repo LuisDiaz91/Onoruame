@@ -204,7 +204,7 @@ class MainWindow:
 
         self.lbl_hora = tk.Label(header,
             text="",
-            bg=COLORES['accent'], fg='#ffffffaa',
+            bg=COLORES['accent'], fg='#cccccc',
             font=('Segoe UI', 9),
         )
         self.lbl_hora.pack(side=tk.RIGHT, padx=10)
