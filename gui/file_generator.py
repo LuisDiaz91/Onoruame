@@ -1,108 +1,165 @@
 # gui/file_generator.py
 """
-Generador de mapas y archivos para Onoruame
-Adaptado del FileGenerator original
+Generador de mapas interactivos para Onoruame.
 """
-
 import os
 import logging
+
 import folium
-import polyline
-from typing import List
-from core.models import Ruta
-from core.config import settings
+import polyline as polyline_lib
+
+from core.models  import Ruta, Edificio
+from core.config  import settings
 
 logger = logging.getLogger(__name__)
 
+
 class FileGenerator:
-    """Generador de mapas interactivos"""
-    
+    """Genera mapas HTML con Folium para cada ruta."""
+
     COLORES_ZONA = {
-        'CENTRO': '#FF6B6B',
-        'SUR': '#4ECDC4',
-        'ORIENTE': '#45B7D1',
-        'SUR_ORIENTE': '#96CEB4',
-        'OTRAS': '#FECA57',
-        'MIXTA': '#9B59B6'
+        'CENTRO':   '#FF6B6B',
+        'SUR':      '#4ECDC4',
+        'ORIENTE':  '#45B7D1',
+        'NORTE':    '#F7DC6F',
+        'PONIENTE': '#BB8FCE',
+        'OTRAS':    '#FECA57',
     }
-    
-    def __init__(self):
-        os.makedirs('mapas_pro', exist_ok=True)
-    
+
+    def __init__(self, carpeta: str = 'mapas_pro'):
+        self.carpeta = carpeta
+        os.makedirs(carpeta, exist_ok=True)
+
+    # ──────────────────────────────────────────────────────────
+    # API pública
+    # ──────────────────────────────────────────────────────────
+
     def generar_mapa(self, ruta: Ruta) -> str:
-        """Genera mapa interactivo para una ruta"""
-        origen = tuple(map(float, settings.ORIGEN_COORDS.split(',')))
-        color = self.COLORES_ZONA.get(ruta.zona, 'gray')
-        
+        """
+        Genera mapa HTML para una ruta y lo guarda en self.carpeta.
+        Retorna la ruta del archivo generado.
+        """
+        origen = tuple(
+            map(float, settings.ORIGEN_COORDS.replace(' ', '').split(','))
+        )
+        color = self.COLORES_ZONA.get(ruta.zona, '#888888')
+
         m = folium.Map(location=origen, zoom_start=13, tiles='CartoDB positron')
-        
+
         # Marcador de origen
         folium.Marker(
             origen,
-            popup=f"<b>🏛️ {ruta.origen}</b>",
-            icon=folium.Icon(color='green', icon='balance-scale', prefix='fa')
+            popup=f"<b>🏛️ {settings.ORIGEN_NOMBRE}</b>",
+            tooltip="Origen",
+            icon=folium.Icon(color='green', icon='home', prefix='fa'),
         ).add_to(m)
-        
-        # Dibujar ruta optimizada
-        if ruta.polyline:
-            folium.PolyLine(
-                polyline.decode(ruta.polyline),
-                color=color,
-                weight=5,
-                opacity=0.7,
-                popup=f"Ruta {ruta.id} - {ruta.zona}"
-            ).add_to(m)
-        
-        # Marcadores de edificios
+
+        # Polyline de la ruta optimizada
+        if ruta.polyline_data:                          # ← corregido (era ruta.polyline)
+            try:
+                puntos = polyline_lib.decode(ruta.polyline_data)
+                folium.PolyLine(
+                    puntos,
+                    color=color,
+                    weight=5,
+                    opacity=0.75,
+                    tooltip=f"Ruta {ruta.id} — {ruta.zona}",
+                ).add_to(m)
+            except Exception as e:
+                logger.warning(f"No se pudo dibujar polyline de ruta {ruta.id}: {e}")
+
+        # Marcadores de paradas numerados
+        edificios_con_coords = [e for e in ruta.edificios if e.coordenadas]
         for i, edificio in enumerate(ruta.edificios, 1):
             if not edificio.coordenadas:
                 continue
-            
-            popup = self._crear_popup(edificio, i, ruta.zona)
-            
+
             folium.Marker(
                 edificio.coordenadas,
-                popup=popup,
-                tooltip=f"Edificio #{i}: {edificio.total_personas} personas",
-                icon=folium.Icon(color='red', icon='building', prefix='fa')
+                popup=self._popup_edificio(edificio, i, ruta.zona, color),
+                tooltip=f"#{i} — {edificio.total_personas} persona(s)",
+                icon=folium.DivIcon(
+                    html=f"""
+                        <div style="
+                            background:{color}; color:#fff;
+                            border-radius:50%; width:28px; height:28px;
+                            display:flex; align-items:center; justify-content:center;
+                            font-weight:bold; font-size:13px;
+                            box-shadow:0 2px 6px rgba(0,0,0,.4);
+                        ">{i}</div>
+                    """,
+                    icon_size=(28, 28),
+                    icon_anchor=(14, 14),
+                ),
             ).add_to(m)
-        
-        # Panel informativo
-        self._agregar_panel(m, ruta, color)
-        
-        filename = f"mapas_pro/Ruta_{ruta.id}_{ruta.zona}.html"
+
+        # Panel informativo fijo
+        self._panel_info(m, ruta, color)
+
+        filename = os.path.join(self.carpeta, f"Ruta_{ruta.id}_{ruta.zona}.html")
         m.save(filename)
-        logger.info(f"🗺️ Mapa generado: {filename}")
-        
+        logger.info(f"🗺️  Mapa generado: {filename}")
         return filename
-    
-    def _crear_popup(self, edificio, idx, zona):
-        """Crea el popup HTML para un edificio"""
-        return f"""
-        <div style="font-family: Arial; width: 350px;">
-            <h4 style="color: {self.COLORES_ZONA.get(zona, 'gray')}; margin: 0 0 10px;">
-                🏢 Edificio #{idx} - {zona}
+
+    def generar_todos(self, rutas: list) -> list:
+        """Genera mapas para una lista de rutas. Retorna lista de archivos."""
+        archivos = []
+        for ruta in rutas:
+            try:
+                archivos.append(self.generar_mapa(ruta))
+            except Exception as e:
+                logger.error(f"Error generando mapa ruta {ruta.id}: {e}")
+        return archivos
+
+    # ──────────────────────────────────────────────────────────
+    # Helpers privados
+    # ──────────────────────────────────────────────────────────
+
+    def _popup_edificio(
+        self, edificio: Edificio, idx: int, zona: str, color: str
+    ) -> folium.Popup:
+        personas_html = ""
+        for p in edificio.personas[:5]:
+            nombre = p.get('nombre', '') if isinstance(p, dict) else getattr(p, 'nombre', '')
+            personas_html += f"<small>• {nombre}</small><br>"
+        if edificio.total_personas > 5:
+            personas_html += f"<small>• … y {edificio.total_personas - 5} más</small>"
+
+        html = f"""
+        <div style="font-family:Arial; width:320px;">
+            <h4 style="color:{color}; margin:0 0 8px; font-size:14px;">
+                🏢 Parada #{idx} — {zona}
             </h4>
-            <b>📍 {edificio.direccion_original[:100]}</b><br>
-            <small>👥 {edificio.total_personas} personas</small>
+            <b>📍 {edificio.direccion_original[:90]}</b><br>
+            <small style="color:#666;">
+                {edificio.alcaldia} &nbsp;|&nbsp; {edificio.total_personas} persona(s)
+            </small>
+            <hr style="margin:8px 0; border-color:#eee;">
+            {personas_html}
         </div>
         """
-    
-    def _agregar_panel(self, mapa, ruta, color):
-        """Agrega panel informativo al mapa"""
+        return folium.Popup(html, max_width=340)
+
+    def _panel_info(self, mapa: folium.Map, ruta: Ruta, color: str):
+        dist  = f"{ruta.distancia_km:.1f} km" if ruta.distancia_km else "—"
+        tiempo = f"{int(ruta.tiempo_min)} min" if ruta.tiempo_min else "—"
+
         panel = f"""
-        <div style="position:fixed; top:10px; left:50px; z-index:1000; background:white; 
-                    padding:15px; border-radius:10px; box-shadow:0 0 15px rgba(0,0,0,0.2);
-                    border:2px solid {color}; font-family:Arial; max-width:400px;">
-            <h4 style="margin:0 0 10px; color:#2c3e50; border-bottom:2px solid {color}; padding-bottom:5px;">
-                Ruta {ruta.id} - {ruta.zona}
-            </h4>
-            <small>
-                <b>🏢 Edificios:</b> {ruta.total_edificios}<br>
-                <b>👥 Personas:</b> {ruta.total_personas}<br>
-                <b>📏 Distancia:</b> {ruta.distancia_km:.1f} km<br>
-                <b>⏱️ Tiempo:</b> {ruta.tiempo_min:.0f} min<br>
-            </small>
+        <div style="
+            position:fixed; top:12px; left:52px; z-index:1000;
+            background:#fff; padding:14px 18px;
+            border-radius:10px; box-shadow:0 2px 16px rgba(0,0,0,.18);
+            border-left:4px solid {color}; font-family:Arial; min-width:200px;
+        ">
+            <div style="font-weight:bold; font-size:15px; color:#2c3e50; margin-bottom:8px;">
+                Ruta {ruta.id} &mdash; {ruta.zona}
+            </div>
+            <div style="font-size:12px; line-height:1.8; color:#444;">
+                🏢 <b>{ruta.total_edificios}</b> paradas<br>
+                👥 <b>{ruta.total_personas}</b> personas<br>
+                📏 <b>{dist}</b><br>
+                ⏱️ <b>{tiempo}</b>
+            </div>
         </div>
         """
         mapa.get_root().html.add_child(folium.Element(panel))
