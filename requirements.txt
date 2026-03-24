@@ -7,9 +7,8 @@ gunicorn==21.2.0
 psycopg2-binary==2.9.7
 
 # Cache / Cola
-redis==5.0.1
+redis==4.6.0
 celery==5.3.4
-celery[redis]==5.3.4
 
 # HTTP
 requests==2.31.0
