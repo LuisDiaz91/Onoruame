@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS rutas (
     tiempo_min       INTEGER      DEFAULT 0,
     total_paradas    INTEGER      DEFAULT 0,
     total_personas   INTEGER      DEFAULT 0,
+    ruta_hash        VARCHAR(32) UNIQUE,    -- MD5 del contenido, evita duplicados
     fecha_asignacion TIMESTAMPTZ,
     fecha_inicio     TIMESTAMPTZ,
     fecha_completada TIMESTAMPTZ,
