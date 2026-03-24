@@ -19,4 +19,4 @@ echo "✅ Servicios listos"
 echo "🌐 Abre en tu navegador: https://$CODESPACE_NAME-6080.app.github.dev/vnc.html"
 echo "🚗 Iniciando Onoruame..."
 export DISPLAY=:99
-python run.py
+python main.py
