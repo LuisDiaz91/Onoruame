@@ -1,18 +1,29 @@
-cat > requirements.txt << 'EOF'
+# Web
 flask==2.3.3
 flask-cors==4.0.0
+gunicorn==21.2.0
+
+# Base de datos
 psycopg2-binary==2.9.7
+
+# Cache / Cola
 redis==5.0.1
+celery==5.3.4
+celery[redis]==5.3.4
+
+# HTTP
 requests==2.31.0
+
+# Config
 python-dotenv==1.0.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
+
+# Data / Excel
 pandas==2.1.3
-folium==0.15.0
-polyline==2.0.2
 openpyxl==3.1.2
 xlrd==2.0.1
-<<<<<<< HEAD
-EOF
-=======
->>>>>>> b4464ec (Auto-sync: 2026-03-20 16:59:19)
+
+# Mapas
+folium==0.15.0
+polyline==2.0.2
