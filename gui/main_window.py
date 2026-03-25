@@ -574,7 +574,7 @@ class MainWindow:
 
             # Sincronizar settings desde UI antes de instanciar el generador
             settings.MAX_EDIFICIOS_POR_RUTA = int(self.spin_max.get())
-            settings.GOOGLE_MAPS_API_KEY    = self.entry_api.get().strip()
+            #settings.GOOGLE_MAPS_API_KEY    = self.entry_api.get().strip()
             settings.ORIGEN_COORDS          = self.entry_coords.get().strip()
             settings.ORIGEN_NOMBRE          = self.entry_origen.get().strip()
 
