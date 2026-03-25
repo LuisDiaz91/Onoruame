@@ -24,26 +24,22 @@ class RutaRepo:
             if estado:
                 cur.execute("""
                     SELECT r.*,
-                           COUNT(p.id)       AS total_paradas,
-                           SUM(p.total_personas) AS total_personas,
-                           rep.nombre        AS repartidor_nombre
+                           r.total_paradas,
+                           r.total_personas,
+                           rep.nombre AS repartidor_nombre
                     FROM rutas r
-                    LEFT JOIN paradas      p   ON r.id = p.ruta_id
                     LEFT JOIN repartidores rep ON r.repartidor_id = rep.id
                     WHERE r.estado = %s
-                    GROUP BY r.id, rep.nombre
                     ORDER BY r.id DESC
                 """, (estado,))
             else:
                 cur.execute("""
                     SELECT r.*,
-                           COUNT(p.id)           AS total_paradas,
-                           SUM(p.total_personas) AS total_personas,
-                           rep.nombre            AS repartidor_nombre
+                           r.total_paradas,
+                           r.total_personas,
+                           rep.nombre AS repartidor_nombre
                     FROM rutas r
-                    LEFT JOIN paradas      p   ON r.id = p.ruta_id
                     LEFT JOIN repartidores rep ON r.repartidor_id = rep.id
-                    GROUP BY r.id, rep.nombre
                     ORDER BY r.id DESC
                 """)
             return [dict(r) for r in cur.fetchall()]
