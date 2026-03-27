@@ -52,7 +52,7 @@ class RouteGenerator:
     }
 
     ZONAS_ALCALDIAS = {
-        'CENTRO':   ['CUAUHTEMOC', 'MIGUEL HIDALGO', 'BENITO JUAREZ', 'VENUSTIANO CARRANZA'],
+        'CENTRO':   ['CUAUHTEMOC', 'MIGUEL HIDALGO', 'BENITO JUAREZ', 'BENITO JUÁREZ', 'Benito Juárez', 'Benito Juarez', 'VENUSTIANO CARRANZA'],
         'SUR':      ['ALVARO OBREGON', 'COYOACAN', 'TLALPAN', 'MAGDALENA CONTRERAS',
                      'XOCHIMILCO', 'MILPA ALTA', 'TLAHUAC'],
         'ORIENTE':  ['IZTAPALAPA', 'IZTACALCO'],
@@ -61,7 +61,7 @@ class RouteGenerator:
     }
 
     MAX_PARADAS   = settings.MAX_EDIFICIOS_POR_RUTA
-    MIN_PARADAS   = 3
+    MIN_PARADAS   = 1
     DISTANCIA_MAX = 5.0    # km — corta el vecino más cercano si está muy lejos
     UMBRAL_KMEANS = MAX_PARADAS * 3   # dinámico: si caben en ≤3 rutas → vecino directo
 
@@ -442,9 +442,13 @@ class RouteGenerator:
     def _asignar_zona(self, alcaldia: str) -> str:
         if not alcaldia:
             return 'OTRAS'
-        up = alcaldia.upper()
+        import unicodedata
+        def sin_acentos(s):
+            return ''.join(c for c in unicodedata.normalize('NFD', s)
+                          if unicodedata.category(c) != 'Mn')
+        up = sin_acentos(alcaldia.upper())
         for zona, alcaldias in self.ZONAS_ALCALDIAS.items():
-            if any(a in up for a in alcaldias):
+            if any(sin_acentos(a) in up for a in alcaldias):
                 return zona
         return 'OTRAS'
 

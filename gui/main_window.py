@@ -595,14 +595,7 @@ class MainWindow:
             # Generar mapas
             self._set_progress('Generando mapas…')
             os.makedirs('mapas_pro', exist_ok=True)
-
-            try:
-                # fg = FileGenerator()
-                #                 fg.generar_todos(rutas)
-            except Exception as e:
-                self.log(f'⚠️ Error generando mapas: {e}', 'warn')
-
-            total_p = sum(r.total_edificios  for r in rutas)
+            total_p = sum(r.total_paradas  for r in rutas)
             total_pe = sum(r.total_personas for r in rutas)
             self.log(
                 f'🎉 {len(rutas)} rutas | {total_p} paradas | {total_pe} personas',
@@ -655,7 +648,7 @@ class MainWindow:
                     r['id'],
                     r.get('zona', ''),
                     f"{icono} {estado_r}",
-                    r.get('total_edificios', 0),
+                    r.get('total_paradas', 0),
                     r.get('total_personas', 0),
                     f"{r.get('distancia_km', 0):.1f} km",
                     f"{r.get('tiempo_min', 0)} min",
