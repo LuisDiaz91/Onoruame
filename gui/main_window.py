@@ -720,6 +720,18 @@ class MainWindow:
         win.geometry('700x500')
         win.configure(bg=COLORES['bg'])
 
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
+        win.bind("<Escape>", lambda e: win.destroy())
+        
+        # Frame para botones
+        btn_frame = tk.Frame(win, bg=COLORES["bg"])
+        btn_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        
+        btn_cerrar = tk.Button(btn_frame, text="✖ Cerrar", command=win.destroy,
+                                bg=COLORES["danger"], fg="white",
+                                font=("Segoe UI", 9, "bold"))
+        btn_cerrar.pack(side=tk.RIGHT, padx=5)
+        
         txt = scrolledtext.ScrolledText(win,
             bg=COLORES['panel'], fg=COLORES['text'],
             font=('Consolas', 9), relief='flat',
