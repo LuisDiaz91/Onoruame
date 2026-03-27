@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # ── Google Maps ────────────────────────────────────────────
     GOOGLE_MAPS_API_KEY: str = ""
     TIMEOUT_API:         int = 10   # segundos — usado por geocoder
+    CACHE_FILE: str = "geocode_cache.json"
 
     # ── Origen ─────────────────────────────────────────────────
     ORIGEN_COORDS: str = "19.4283717,-99.1430307"

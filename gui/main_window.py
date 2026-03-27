@@ -597,8 +597,8 @@ class MainWindow:
             os.makedirs('mapas_pro', exist_ok=True)
 
             try:
-                fg = FileGenerator()
-                fg.generar_todos(rutas)
+                # fg = FileGenerator()
+                #                 fg.generar_todos(rutas)
             except Exception as e:
                 self.log(f'⚠️ Error generando mapas: {e}', 'warn')
 
