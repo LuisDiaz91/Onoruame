@@ -595,7 +595,7 @@ class MainWindow:
             # Generar mapas
             self._set_progress('Generando mapas…')
             os.makedirs('mapas_pro', exist_ok=True)
-            total_p = sum(r.total_paradas  for r in rutas)
+            total_p = sum(r.total_edificios  for r in rutas)
             total_pe = sum(r.total_personas for r in rutas)
             self.log(
                 f'🎉 {len(rutas)} rutas | {total_p} paradas | {total_pe} personas',
