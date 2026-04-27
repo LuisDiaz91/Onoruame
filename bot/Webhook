@@ -1,0 +1,41 @@
+# bot/webhook.py
+"""
+Webhook de Telegram integrado con la API Flask.
+Se monta en /webhook dentro de api/app.py.
+"""
+import logging
+import telebot
+from flask import request
+
+from bot.handlers import bot
+
+logger = logging.getLogger(__name__)
+
+
+def register_webhook(app, url_prefix: str = ""):
+    """
+    Registra el endpoint /webhook en la app Flask.
+
+    Uso en api/app.py:
+        from bot.webhook import register_webhook
+        register_webhook(app)
+    """
+
+    @app.route(f"{url_prefix}/webhook", methods=["POST"])
+    def webhook():
+        if request.headers.get("content-type") == "application/json":
+            json_string = request.get_data().decode("utf-8")
+            update = telebot.types.Update.de_json(json_string)
+            bot.process_new_updates([update])
+            return "OK", 200
+        return "Bad request", 400
+
+    @app.route(f"{url_prefix}/bot/status")
+    def bot_status():
+        from flask import jsonify
+        return jsonify({
+            "status": "ok",
+            "bot": "Onoruame PJCDMX",
+        })
+
+    logger.info("✅ Webhook de Telegram registrado en /webhook")
